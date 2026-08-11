@@ -1,0 +1,39 @@
+# Python & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environments
+venv/
+venv_gpu/
+env/
+ENV/
+.venv/
+
+# PyTorch & Model Checkpoints (large binary files)
+checkpoints/*.pth
+checkpoints/*.pt
+checkpoints/*.ckpt
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+!checkpoints/.gitkeep
+
+# Tensorboard & Training Logs
+runs/
+.system_generated/
+*.log
+
+# Evaluation & Test outputs
+evaluation_results/
+restored_test_outputs/
+test_outputs/
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,43 @@
+# =============================================================================
+# SemiRestoreNet — Clean Training Configuration (KLA Metrology Benchmark)
+# =============================================================================
+
+# --- Model Architecture ---
+in_channels: 1                         # Grayscale SEM image
+num_feat: 64                           # Intermediate feature channels
+num_grow_ch: 32                        # Growth channels per Dense Block
+num_rrdb_blocks: [8, 8, 7]             # True 23-RRDB Teacher depth (8 + 8 + 7)
+window_size: 8                         # Base Swin window size
+upscale_factor: 1                      # 1 for same-res denoising, 2 for 2x super-resolution
+drop_path_rate: 0.10                   # Stochastic depth regularization
+use_log_domain: true                   # Signed homomorphic log-domain stream for multiplicative speckle
+
+# --- Loss Configuration ---
+lambda_charb: 1.0                      # Primary: Spatially-weighted Charbonnier L1
+lambda_ssim: 0.1                       # Primary: Structural similarity
+lambda_edge: 0.05                      # Primary: Sobel gradient sharpness (CD protection)
+lambda_fft: 0.01                       # Supporting: Frequency power spectrum matching
+lambda_fidelity: 0.05                  # Anti-Hallucination: Input degradation-consistency fidelity loss (0.0 to disable)
+edge_boost: 3.0                        # 3x pixel loss weight on defect / edge boundaries
+fft_cap: 2.0                           # Capping maximum frequency weighting (anti-ringing)
+enable_fft: true
+
+# --- Optimization & Transfer Learning ---
+pretrained_weights: null               # Optional path to pretrained Real-ESRGAN / ESRGAN RRDB weights (.pth)
+lr_backbone_scale: 0.2                 # 0.2x LR for pretrained RRDB backbone, 1.0x for Swin/CBAM/Heads
+learning_rate: 2.0e-4
+min_lr: 1.0e-7
+weight_decay: 1.0e-4
+warmup_epochs: 5
+total_epochs: 200
+batch_size: 16
+num_workers: 4
+use_amp: true                          # Automatic Mixed Precision
+ema_decay: 0.999                       # Exponential Moving Average for weights
+accumulation_steps: 1                  # Gradient accumulation steps
+
+# --- Paths ---
+checkpoint_dir: "./checkpoints"
+log_dir: "./runs"
+save_interval: 10
+eval_interval: 1

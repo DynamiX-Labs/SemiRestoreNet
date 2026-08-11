@@ -1,0 +1,17 @@
+[
+  {
+    "style": "DRAM",
+    "search_width": 512,
+    "search_height": 512,
+    "ref_width": 128,
+    "ref_height": 128,
+    "top_left_x": 153,
+    "top_left_y": 306,
+    "center_x": 217.0,
+    "center_y": 370.0,
+    "noise_level": 0.18096759156410425,
+    "pair_id": "dram_0001",
+    "reference_file": "reference/dram_0001_ref.png",
+    "search_file": "search/dram_0001_search.png"
+  }
+]

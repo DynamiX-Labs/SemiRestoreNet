@@ -1,0 +1,2 @@
+pair_id,style,reference_file,search_file,center_x,center_y,top_left_x,top_left_y,ref_width,ref_height,search_width,search_height,noise_level
+dram_0001,DRAM,reference/dram_0001_ref.png,search/dram_0001_search.png,217.0,370.0,153,306,128,128,512,512,0.18096759156410425
