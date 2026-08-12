@@ -29,7 +29,7 @@ learning_rate: 2.0e-4
 min_lr: 1.0e-7
 weight_decay: 1.0e-4
 warmup_epochs: 5
-total_epochs: 100
+total_epochs: 11                       # Phase 2 Target: Complete Epoch 10 and finish
 patch_size: 128                        # 128x128 training patch cropping (standard for super-resolution)
 batch_size: 1                          # 1 patch per forward pass (~280MB VRAM footprint, zero OOM)
 accumulation_steps: 16                 # 16x accumulation = Effective Batch Size 16

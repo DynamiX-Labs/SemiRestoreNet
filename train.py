@@ -392,6 +392,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train SemiRestoreNet')
     parser.add_argument('--config', type=str, default='configs/train_config.yaml', help='Path to config')
     parser.add_argument('--pretrained_weights', type=str, default=None, help='Path to pretrained RRDB weights (.pth)')
+    parser.add_argument('--resume', type=str, default=None, help='Path to checkpoint to resume from (.pth)')
     args = parser.parse_args()
     
     with open(args.config, 'r') as f:
@@ -399,5 +400,7 @@ if __name__ == '__main__':
         
     if args.pretrained_weights:
         cfg['pretrained_weights'] = args.pretrained_weights
+    if args.resume:
+        cfg['resume_checkpoint'] = args.resume
         
     train(cfg)
