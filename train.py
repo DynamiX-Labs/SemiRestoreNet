@@ -237,13 +237,29 @@ def train(config: dict):
         best_psnr = ckpt_info['metrics'].get('psnr', 0.0)
         print(f"[Train] Resumed from epoch {start_epoch}")
     
+    train_dir = config.get('train_data_dir')
+    if not train_dir:
+        if Path('./train/train/GT').is_dir():
+            train_dir = './train/train/GT'
+        elif Path('./data/sample_dataset/search').is_dir():
+            train_dir = './data/sample_dataset/search'
+        else:
+            train_dir = './data'
+            
+    val_dir = config.get('val_data_dir')
+    if not val_dir:
+        if Path('./data/sample_dataset/search').is_dir():
+            val_dir = './data/sample_dataset/search'
+        else:
+            val_dir = train_dir
+
     train_dataset = DomainRandomizationDataset(
-        data_dir=config.get('train_data_dir', './data/sample_dataset/search'),
+        data_dir=train_dir,
         patch_size=config.get('patch_size', 128),
         mode='train',
     )
     val_dataset = DomainRandomizationDataset(
-        data_dir=config.get('val_data_dir', './data/sample_dataset/search'),
+        data_dir=val_dir,
         patch_size=None,
         mode='val',
     )

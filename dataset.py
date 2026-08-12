@@ -26,7 +26,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 
-SUPPORTED_EXTS = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp'}
+SUPPORTED_EXTS = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.npy'}
 
 
 # =============================================================================
@@ -441,6 +441,14 @@ class DomainRandomizationDataset(Dataset):
     
     def _load_grayscale(self, path: Path) -> np.ndarray:
         """Load clean image as grayscale float32 in [0, 1]."""
+        if path.suffix.lower() == '.npy':
+            arr = np.load(str(path))
+            if arr.ndim == 3:
+                arr = arr[:, :, 0] if arr.shape[2] <= 4 else arr[0, :, :]
+            arr = arr.astype(np.float32)
+            if arr.max() > 1.0:
+                arr = arr / 255.0
+            return arr
         img = Image.open(path).convert('L')
         return np.array(img, dtype=np.float32) / 255.0
     

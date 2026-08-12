@@ -772,10 +772,15 @@ def load_pretrained_rrdb_weights(
 # Factory Functions
 # =============================================================================
 
-def create_teacher_model(upscale_factor: int = 1, use_log_domain: bool = True, **kwargs) -> FullModel:
-    """Create full 23-RRDB Teacher model (17.19M parameters)."""
+def create_teacher_model(
+    num_rrdb_blocks: tuple = (8, 8, 7),
+    upscale_factor: int = 1,
+    use_log_domain: bool = True,
+    **kwargs,
+) -> FullModel:
+    """Create full 23-RRDB Teacher model (16.86M parameters)."""
     return FullModel(
-        num_rrdb_blocks=(8, 8, 7),
+        num_rrdb_blocks=num_rrdb_blocks,
         upscale_factor=upscale_factor,
         use_log_domain=use_log_domain,
         **kwargs

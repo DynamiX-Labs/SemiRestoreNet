@@ -29,15 +29,15 @@ learning_rate: 2.0e-4
 min_lr: 1.0e-7
 weight_decay: 1.0e-4
 warmup_epochs: 5
-total_epochs: 200
-batch_size: 16
-num_workers: 4
-use_amp: true                          # Automatic Mixed Precision
-ema_decay: 0.999                       # Exponential Moving Average for weights
-accumulation_steps: 1                  # Gradient accumulation steps
+total_epochs: 100
+batch_size: 4                          # 4 images per forward pass (safe for 4GB VRAM)
+accumulation_steps: 4                  # 4x accumulation = Effective Batch Size 16
+num_workers: 4                         # Multi-threaded async dataloading
+use_amp: true                          # FP16 Automatic Mixed Precision (Tensor Cores)
+ema_decay: 0.999                       # Exponential Moving Average for validation weights
 
 # --- Paths ---
 checkpoint_dir: "./checkpoints"
 log_dir: "./runs"
-save_interval: 10
+save_interval: 5
 eval_interval: 1
