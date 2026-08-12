@@ -31,6 +31,7 @@ from typing import Union, Dict, Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint
 from einops import rearrange
 
 
@@ -556,7 +557,10 @@ class FullModel(nn.Module):
         
         # Stage 1 (Extract early shallow edge features)
         for block in self.stage1:
-            feat = block(feat)
+            if self.training and feat.requires_grad:
+                feat = torch.utils.checkpoint.checkpoint(block, feat, use_reentrant=False)
+            else:
+                feat = block(feat)
         feat_stage1 = feat
             
         # Swin 1
@@ -564,7 +568,10 @@ class FullModel(nn.Module):
         
         # Stage 2 (Extract mid-level periodic features)
         for block in self.stage2:
-            feat = block(feat)
+            if self.training and feat.requires_grad:
+                feat = torch.utils.checkpoint.checkpoint(block, feat, use_reentrant=False)
+            else:
+                feat = block(feat)
         feat_stage2 = feat
             
         # Swin 2
@@ -572,7 +579,10 @@ class FullModel(nn.Module):
         
         # Stage 3
         for block in self.stage3:
-            feat = block(feat)
+            if self.training and feat.requires_grad:
+                feat = torch.utils.checkpoint.checkpoint(block, feat, use_reentrant=False)
+            else:
+                feat = block(feat)
             
         # Defect Attention + Global Trunk Residual Skip
         feat = self.cbam(feat)

@@ -19,6 +19,9 @@ import time
 import yaml
 from pathlib import Path
 
+# Configure PyTorch memory allocator to avoid fragmentation on Windows GPUs
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
