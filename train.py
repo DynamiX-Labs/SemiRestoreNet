@@ -125,6 +125,10 @@ def train_one_epoch(
             losses = loss_fn(pred=output['restored'], target=clean, degraded=degraded)
             scaled_loss = losses['total'] / accumulation_steps
         
+        if not torch.isfinite(scaled_loss):
+            optimizer.zero_grad(set_to_none=True)
+            continue
+        
         if use_amp and device.type == 'cuda':
             scaler.scale(scaled_loss).backward()
         else:

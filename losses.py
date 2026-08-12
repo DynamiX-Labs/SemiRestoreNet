@@ -32,12 +32,12 @@ def compute_importance_map(
     grad_y = target[..., 1:, :] - target[..., :-1, :]
     grad_x = F.pad(grad_x, (0, 1, 0, 0), mode='replicate')
     grad_y = F.pad(grad_y, (0, 0, 0, 1), mode='replicate')
-    grad_mag = torch.sqrt(grad_x ** 2 + grad_y ** 2 + 1e-8)
+    grad_mag = torch.sqrt(grad_x ** 2 + grad_y ** 2 + 1e-6)
     
     batch_max = grad_mag.flatten(1).max(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
-    grad_norm = grad_mag / (batch_max + 1e-8)
+    grad_norm = grad_mag / torch.clamp(batch_max, min=1e-6)
     weight_map = min_weight + (edge_boost - min_weight) * grad_norm
-    return weight_map
+    return torch.clamp(weight_map, min=min_weight, max=edge_boost)
 
 
 # =============================================================================
@@ -106,14 +106,14 @@ class SSIMLoss(nn.Module):
         mu2_sq = mu2 ** 2
         mu1_mu2 = mu1 * mu2
         
-        sigma1_sq = F.conv2d(pred * pred, w, padding=pad, groups=c) - mu1_sq
-        sigma2_sq = F.conv2d(target * target, w, padding=pad, groups=c) - mu2_sq
+        sigma1_sq = F.relu(F.conv2d(pred * pred, w, padding=pad, groups=c) - mu1_sq)
+        sigma2_sq = F.relu(F.conv2d(target * target, w, padding=pad, groups=c) - mu2_sq)
         sigma12 = F.conv2d(pred * target, w, padding=pad, groups=c) - mu1_mu2
         
-        ssim_map = ((2 * mu1_mu2 + self.C1) * (2 * sigma12 + self.C2)) / (
-            (mu1_sq + mu2_sq + self.C1) * (sigma1_sq + sigma2_sq + self.C2) + 1e-8
-        )
-        return 1.0 - torch.mean(ssim_map)
+        denom = (mu1_sq + mu2_sq + self.C1) * (sigma1_sq + sigma2_sq + self.C2)
+        denom = torch.clamp(denom, min=1e-6)
+        ssim_map = ((2 * mu1_mu2 + self.C1) * (2 * sigma12 + self.C2)) / denom
+        return 1.0 - torch.clamp(torch.mean(ssim_map), min=-1.0, max=1.0)
 
 
 # =============================================================================
