@@ -122,20 +122,19 @@ def compute_cd_error(
     target: np.ndarray,
     canny_low: float = 50,
     canny_high: float = 150,
+    max_dist: float = 10.0,
 ) -> float:
-    """Compute Critical Dimension edge error via Chamfer distance on Canny edges.
+    """Compute Critical Dimension edge error via truncated Chamfer distance on Canny edges.
     
     Measures whether restoration preserves edge placement — directly relevant
     to whether CD measurements would be affected.
-    
-    L_CD = mean(min_distance(pred_edges → target_edges))
-           + mean(min_distance(target_edges → pred_edges))
     
     Args:
         pred: Predicted image [H, W] in [0, 1].
         target: Ground truth image [H, W] in [0, 1].
         canny_low: Canny edge detection low threshold.
         canny_high: Canny edge detection high threshold.
+        max_dist: Truncation threshold to prevent corner-to-corner background outliers.
         
     Returns:
         Chamfer distance in pixels. Lower is better.
@@ -151,22 +150,18 @@ def compute_cd_error(
     if pred_edges.sum() == 0 or target_edges.sum() == 0:
         if pred_edges.sum() == 0 and target_edges.sum() == 0:
             return 0.0
-        # Return fallback cap (10.0 pixels) instead of inf to prevent corrupting metric logs
-        return 10.0
+        return max_dist
     
     # Chamfer distance using distance transforms
-    # dist_pred[i,j] = distance from (i,j) to nearest edge in pred
     dist_pred = distance_transform_edt(~pred_edges.astype(bool))
     dist_target = distance_transform_edt(~target_edges.astype(bool))
     
-    # Mean distance from each target edge pixel to nearest pred edge pixel
-    target_to_pred = dist_pred[target_edges > 0].mean()
-    # Mean distance from each pred edge pixel to nearest target edge pixel
-    pred_to_target = dist_target[pred_edges > 0].mean()
+    # Truncated mean distance from each target edge pixel to nearest pred edge pixel
+    target_to_pred = np.clip(dist_pred[target_edges > 0], 0, max_dist).mean()
+    pred_to_target = np.clip(dist_target[pred_edges > 0], 0, max_dist).mean()
     
     # Symmetric Chamfer distance
     chamfer = (target_to_pred + pred_to_target) / 2.0
-    
     return chamfer
 
 

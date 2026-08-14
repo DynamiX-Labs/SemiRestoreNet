@@ -384,7 +384,7 @@ def train(config: dict):
             psnr = val_results['psnr']
             ssim = val_results['ssim']
             cd_err = val_results['cd_error']
-            print(f"Epoch {epoch:3d} | Train Loss: {train_losses['total']:.4f} | Val PSNR: {psnr:.2f} dB | SSIM: {ssim:.4f} | CD Error: {cd_err:.3f} nm")
+            print(f"Epoch {epoch:3d} | Train Loss: {train_losses['total']:.4f} | Val PSNR: {psnr:.2f} dB | SSIM: {ssim:.4f} | CD Error: {cd_err:.3f} px (~{cd_err * 0.15:.3f} nm)")
             
             if psnr > best_psnr:
                 best_psnr = psnr
