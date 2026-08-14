@@ -1,0 +1,14 @@
+README.md
+  h_73598aa631e98b 5-6,10-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "e8f7589913fe66b294c1a17662d3abb273e00094",
+  "prompts": {},
+  "humans": {
+    "h_73598aa631e98b": {
+      "author": "ARYA MGC <aryamgc.act2024@citchennai.net>"
+    }
+  }
+}
