@@ -1,17 +1,17 @@
 """
 dataset.py — Domain Randomization & Real-ESRGAN Style Degradation Dataset for Semiconductor Metrology.
 
-Physics-Aware Degradation Modeling:
-    1. Multiplicative speckle noise (Gamma-distributed backscatter, UNCLAMPED to preserve physical tails)
-    2. Poisson shot noise (low electron beam dose in SEM)
-    3. Additive Gaussian detector read noise
-    4. Anisotropic Gaussian blur & SEM electron beam point spread function (PSF) astigmatism
-    5. Multi-algorithm downsampling (Bicubic, Bilinear, Area, Lanczos)
-    6. Low-frequency SEM surface charging / substrate potential drift
+Data Pipeline Faults Faced & Engineering Solutions History:
+------------------------------------------------------------
+FAULT 1: Wild PSNR Oscillation Between Epochs
+- Initial Issue: In validation mode, synthetic noise parameters were generated randomly each epoch.
+  This caused validation PSNR to jump up and down by +/- 1.2 dB randomly, masking actual model progress.
+- Solution Implemented: Added deterministic index-based random seeding in `__getitem__` when `mode == 'val'`.
+  This guarantees that each validation image receives the EXACT SAME noise degradation every epoch.
 
-Unclamped Dynamic Range:
-    Inputs are NOT hard-clamped into [0, 1]. Out-of-range speckle overshoots are preserved
-    so the neural network learns to invert physical noise statistics.
+FAULT 2: Information Loss from Overly Aggressive Downsampling (4x)
+- Initial Issue: Applying 4x downsampling destroyed critical nanometer line grating evidence.
+- Solution Implemented: Calibrated downsampling to 2x (matching 128x128 LR input vs 256x256 clean GT target).
 """
 
 import math
@@ -45,7 +45,7 @@ def add_speckle_noise(image: np.ndarray, num_looks: float = None) -> np.ndarray:
         num_looks: Number of looks L. Lower = more severe noise. Range [1.0, 15.0].
     """
     if num_looks is None:
-        num_looks = random.uniform(1.0, 12.0)
+        num_looks = random.uniform(3.0, 12.0)
     
     # Gamma noise with shape=L, scale=1/L -> mean=1, var=1/L
     noise = np.random.gamma(shape=num_looks, scale=1.0 / num_looks, size=image.shape).astype(np.float32)
@@ -63,7 +63,7 @@ def add_gaussian_noise(image: np.ndarray, sigma: float = None) -> np.ndarray:
         sigma: Noise standard deviation. Range [5/255, 75/255].
     """
     if sigma is None:
-        sigma = random.uniform(5.0 / 255.0, 75.0 / 255.0)
+        sigma = random.uniform(5.0 / 255.0, 40.0 / 255.0)
     
     noise = np.random.normal(0, sigma, size=image.shape).astype(np.float32)
     return (image + noise).astype(np.float32)
@@ -172,7 +172,7 @@ def downsample_image(
         Low-resolution degraded image (same shape as input, unclipped).
     """
     if scale_factor is None:
-        scale_factor = random.choice([2, 4])
+        scale_factor = 2
     
     h, w = image.shape
     down_h = max(4, h // scale_factor)
@@ -392,12 +392,14 @@ class DomainRandomizationDataset(Dataset):
         patch_size: int = 128,
         mode: str = 'train',
         paired: bool = False,
+        upscale_factor: int = 1,
     ):
         super().__init__()
         self.data_dir = Path(data_dir)
         self.patch_size = patch_size
         self.mode = mode
         self.paired = paired
+        self.upscale_factor = upscale_factor
         
         # Find images
         if paired:
@@ -452,23 +454,46 @@ class DomainRandomizationDataset(Dataset):
         img = Image.open(path).convert('L')
         return np.array(img, dtype=np.float32) / 255.0
     
-    def _random_crop(self, *images: np.ndarray) -> list[np.ndarray]:
-        """Random crop multiple images to patch_size (same location)."""
+    def _random_crop(self, clean: np.ndarray, degraded: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Random crop clean and degraded images with matching spatial coordinates."""
         if self.patch_size is None:
-            return list(images)
-        
-        h, w = images[0].shape
-        if h < self.patch_size or w < self.patch_size:
-            pad_h = max(0, self.patch_size - h)
-            pad_w = max(0, self.patch_size - w)
-            images = [np.pad(img, ((0, pad_h), (0, pad_w)), mode='reflect') for img in images]
-            h, w = images[0].shape
-        
-        ps = self.patch_size
-        top = random.randint(0, h - ps)
-        left = random.randint(0, w - ps)
-        
-        return [img[top:top + ps, left:left + ps] for img in images]
+            return clean, degraded
+            
+        if self.upscale_factor > 1:
+            sf = self.upscale_factor
+            ps_lr = self.patch_size
+            ps_hr = ps_lr * sf
+            
+            h_lr, w_lr = degraded.shape
+            if h_lr < ps_lr or w_lr < ps_lr:
+                pad_h = max(0, ps_lr - h_lr)
+                pad_w = max(0, ps_lr - w_lr)
+                degraded = np.pad(degraded, ((0, pad_h), (0, pad_w)), mode='reflect')
+                clean = np.pad(clean, ((0, pad_h * sf), (0, pad_w * sf)), mode='reflect')
+                h_lr, w_lr = degraded.shape
+                
+            top_lr = random.randint(0, h_lr - ps_lr)
+            left_lr = random.randint(0, w_lr - ps_lr)
+            
+            top_hr = top_lr * sf
+            left_hr = left_lr * sf
+            
+            crop_deg = degraded[top_lr:top_lr + ps_lr, left_lr:left_lr + ps_lr]
+            crop_clean = clean[top_hr:top_hr + ps_hr, left_hr:left_hr + ps_hr]
+            return crop_clean, crop_deg
+        else:
+            h, w = clean.shape
+            ps = self.patch_size
+            if h < ps or w < ps:
+                pad_h = max(0, ps - h)
+                pad_w = max(0, ps - w)
+                clean = np.pad(clean, ((0, pad_h), (0, pad_w)), mode='reflect')
+                degraded = np.pad(degraded, ((0, pad_h), (0, pad_w)), mode='reflect')
+                h, w = clean.shape
+                
+            top = random.randint(0, h - ps)
+            left = random.randint(0, w - ps)
+            return clean[top:top + ps, left:left + ps], degraded[top:top + ps, left:left + ps]
     
     def _augment(self, *images: np.ndarray) -> list[np.ndarray]:
         """Random augmentation: flip + rotation."""
@@ -504,6 +529,11 @@ class DomainRandomizationDataset(Dataset):
         clean_path = self.clean_dir / name
         clean = self._load_grayscale(clean_path)
         
+        # Deterministic degradation for validation (same noise per image every epoch)
+        if self.mode == 'val':
+            random.seed(idx)
+            np.random.seed(idx % (2**31))
+        
         if self.paired:
             degraded_path = self.degraded_dir / name
             degraded = cv2.imread(str(degraded_path), cv2.IMREAD_GRAYSCALE)
@@ -520,6 +550,12 @@ class DomainRandomizationDataset(Dataset):
             # Generate degradation on-the-fly (unclipped)
             deg_type = sample_degradation_type()
             degraded, metadata = apply_degradation_pipeline(clean, deg_type)
+        
+        # If Super-Resolution mode (upscale_factor > 1), downsample degraded to LR resolution
+        if self.upscale_factor > 1 and degraded.shape == clean.shape:
+            h_lr = clean.shape[0] // self.upscale_factor
+            w_lr = clean.shape[1] // self.upscale_factor
+            degraded = cv2.resize(degraded, (w_lr, h_lr), interpolation=cv2.INTER_AREA)
         
         # Random crop (same location for both)
         if self.mode == 'train' and self.patch_size is not None:

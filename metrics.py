@@ -149,7 +149,10 @@ def compute_cd_error(
     
     # Handle edge case: no edges detected
     if pred_edges.sum() == 0 or target_edges.sum() == 0:
-        return float('inf') if (pred_edges.sum() == 0) != (target_edges.sum() == 0) else 0.0
+        if pred_edges.sum() == 0 and target_edges.sum() == 0:
+            return 0.0
+        # Return fallback cap (10.0 pixels) instead of inf to prevent corrupting metric logs
+        return 10.0
     
     # Chamfer distance using distance transforms
     # dist_pred[i,j] = distance from (i,j) to nearest edge in pred

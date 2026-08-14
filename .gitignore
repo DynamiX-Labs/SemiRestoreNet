@@ -31,6 +31,8 @@ runs/
 evaluation_results/
 restored_test_outputs/
 test_outputs/
+submission_restored_outputs/
+Test_NoisyLR/
 
 # IDE & OS files
 .vscode/

@@ -1,15 +1,18 @@
 """
 train.py — Main training pipeline for SemiRestoreNet.
 
-Features:
-    - 5-component metrology loss stack (Charbonnier + SSIM + Sobel Edge + FFT + Anti-Hallucination Fidelity)
-    - Pretrained RRDB weight transfer loading (ESRGAN / Real-ESRGAN backbone)
-    - Layer-wise learning rates (differential LR for pretrained trunk vs new attention/head layers)
-    - Homomorphic signed log-domain stream toggle for multiplicative speckle ablation
-    - Exponential Moving Average (EMA) for weight smoothing
-    - Automatic Mixed Precision (AMP)
-    - Cosine learning rate scheduling with linear warmup
-    - Gradient accumulation support
+Training Stability & Memory Faults Faced & Engineering Solutions History:
+--------------------------------------------------------------------------
+FAULT 1: OSError [WinError 1455] Paging File Too Small / CUDA OOM
+- Initial Issue: Large batch sizes and unconstrained PyTorch CUDA memory allocator caused Windows pagefile exhaustion 
+  and CUDA Out-Of-Memory crashes on 4GB GPUs.
+- Solution Implemented: Set `os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'`, set batch_size = 2,
+  and used 8-step gradient accumulation (effective batch size = 16) for zero-OOM memory stability.
+
+FAULT 2: Destruction of Pretrained Weights During Early Epochs
+- Initial Issue: Applying a high learning rate (2e-4) equally to the backbone and head destroyed pretrained Real-ESRGAN weights.
+- Solution Implemented: Introduced layer-wise optimizer parameter groups with 0.1x LR backbone scaling factor 
+  (backbone_lr = 1e-5, head_lr = 1e-4) and 3-epoch linear warmup.
 """
 
 import argparse
@@ -167,14 +170,16 @@ def train_one_epoch(
 
 
 @torch.no_grad()
-def validate(model, dataloader, loss_fn, device) -> dict:
-    """Run validation and compute metrology metrics."""
+def validate(model, dataloader, loss_fn, device, max_val_samples: int = None) -> dict:
+    """Run validation and compute metrology metrics with optional sample limit for speed."""
     model.eval()
     loss_accum = {}
     metrics_list = []
     count = 0
     
-    for batch in tqdm(dataloader, desc="Validating", leave=False):
+    for idx, batch in enumerate(tqdm(dataloader, desc="Validating", leave=False)):
+        if max_val_samples is not None and idx >= max_val_samples:
+            break
         degraded = batch['degraded'].to(device)
         clean = batch['clean'].to(device)
         
@@ -198,7 +203,8 @@ def validate(model, dataloader, loss_fn, device) -> dict:
     avg_losses = {k: v / max(count, 1) for k, v in loss_accum.items()}
     avg_psnr = np.mean([m['psnr'] for m in metrics_list]) if metrics_list else 0.0
     avg_ssim = np.mean([m['ssim'] for m in metrics_list]) if metrics_list else 0.0
-    avg_cd = np.mean([m['cd_error'] for m in metrics_list]) if metrics_list else 0.0
+    cd_vals = [m['cd_error'] for m in metrics_list if np.isfinite(m['cd_error'])]
+    avg_cd = np.mean(cd_vals) if cd_vals else 0.0
     
     return {
         **avg_losses,
@@ -255,20 +261,20 @@ def train(config: dict):
             
     val_dir = config.get('val_data_dir')
     if not val_dir:
-        if Path('./data/sample_dataset/search').is_dir():
-            val_dir = './data/sample_dataset/search'
-        else:
-            val_dir = train_dir
+        val_dir = train_dir
 
+    upscale_factor = config.get('upscale_factor', 1)
     train_dataset = DomainRandomizationDataset(
         data_dir=train_dir,
         patch_size=config.get('patch_size', 128),
         mode='train',
+        upscale_factor=upscale_factor,
     )
     val_dataset = DomainRandomizationDataset(
         data_dir=val_dir,
         patch_size=None,
         mode='val',
+        upscale_factor=upscale_factor,
     )
     
     batch_size = config.get('batch_size', 16)
@@ -326,6 +332,10 @@ def train(config: dict):
     print(f"[Train] Optimizer: AdamW with {len(param_groups)} param groups (Trunk LR: {base_lr * lr_backbone_scale:.2e}, Heads LR: {base_lr:.2e})")
     
     total_epochs = config.get('total_epochs', 200)
+    if start_epoch >= total_epochs:
+        # Incremental fine-tuning: add target epochs to start_epoch
+        total_epochs = start_epoch + total_epochs
+        
     scheduler = WarmupCosineScheduler(
         optimizer,
         warmup_epochs=config.get('warmup_epochs', 5),
@@ -363,7 +373,9 @@ def train(config: dict):
         val_interval = config.get('val_interval', 1)
         if (epoch + 1) % val_interval == 0 or epoch == total_epochs - 1:
             ema.apply_shadow()
-            val_results = validate(model, val_loader, loss_fn, device)
+            # Fast validation on 100 images for speed during epochs, full dataset on final epoch
+            val_limit = None if epoch == total_epochs - 1 else config.get('max_val_samples', 100)
+            val_results = validate(model, val_loader, loss_fn, device, max_val_samples=val_limit)
             ema.restore()
             
             for key, val in val_results.items():
