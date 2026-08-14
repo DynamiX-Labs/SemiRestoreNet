@@ -108,8 +108,8 @@ To systematically isolate the contribution of each module, we conducted an ablat
 |---|:---:|:---:|:---:|:---:|:---:|
 | **Scratch Baseline (Trial 1)** | $14.63\text{ dB}$ | $0.2810$ | $> 1.450\text{ nm}$ | 100 Validation Images | Stagnated |
 | **Stage 1 Achieved (60 Epochs)** | $25.20\text{ dB}$ | $0.6192$ | $0.540\text{ nm}$ | 100 Validation Images | Converged |
-| **Stage 2 Achieved (85 Epochs)** | **$25.93\text{ dB}$** | **$0.6464$** | **$0.471\text{ nm}$** | 100 Validation Images | **Achieved & Verified ✅** |
-| **Stage 2 + 8-Fold TTA Ensemble** | **$26.85\text{ dB}$** | **$0.7140$** | **$< 0.370\text{ nm}$** | **400 Competition Test Images** | **Evaluated & Saved ✅** |
+| **Stage 2 Achieved (85 Epochs)** | **$25.93\text{ dB}$** | **$0.6464$** | **$0.471\text{ nm}$** | 100 Validation Images | Achieved & Verified |
+| **Stage 2 + 8-Fold TTA Ensemble** | **$26.85\text{ dB}$** | **$0.7140$** | **$< 0.370\text{ nm}$** | **400 Competition Test Images** | Evaluated & Saved |
 | *Stage 3 Prospective Target* | *$28.5 - 31.0\text{ dB}$* | *$0.85 - 0.92$* | *$< 0.320\text{ nm}$* | *Multi-Frame Temporal Horizon* | *Prospective Target* |
 
 ### 5.2 Latency & Hardware Execution Profile
@@ -143,10 +143,12 @@ A core challenge in deep learning for electron microscopy is the generalization 
 
 ## 7. Visual Previews (Test Set Restoration & ONNX Audit)
 
-| Degraded Input ($128\times 128$, Raw SEM) | PyTorch Restored ($256\times 256$) | ONNX Runtime Restored ($256\times 256$) |
+| Degraded Input (128x128, Raw SEM) | PyTorch Restored (256x256) | ONNX Runtime Restored (256x256) |
 |:---:|:---:|:---:|
-| ![Sample 0 Input](preview_restored/000000_onnx_comparison.png) | *Sample 000000: Full noise suppression + $2\times$ SR* | *Exact $100\%$ Numerical Match (Diff $< 3.6\times 10^{-4}$)* |
-| ![Sample 1 Input](preview_restored/000001_onnx_comparison.png) | *Sample 000001: Nanoscale contact profile preservation* | *Exact $100\%$ Numerical Match (Diff $< 3.6\times 10^{-4}$)* |
+| ![Sample 0 Input](preview_restored/000000_input.png) | ![Sample 0 PyTorch](preview_restored/000000_pytorch.png) | ![Sample 0 ONNX](preview_restored/000000_onnx.png) |
+| ![Sample 1 Input](preview_restored/000001_input.png) | ![Sample 1 PyTorch](preview_restored/000001_pytorch.png) | ![Sample 1 ONNX](preview_restored/000001_onnx.png) |
+| ![Sample 2 Input](preview_restored/000002_input.png) | ![Sample 2 PyTorch](preview_restored/000002_pytorch.png) | ![Sample 2 ONNX](preview_restored/000002_onnx.png) |
+| ![Sample 3 Input](preview_restored/000003_input.png) | ![Sample 3 PyTorch](preview_restored/000003_pytorch.png) | ![Sample 3 ONNX](preview_restored/000003_onnx.png) |
 
 ---
 
