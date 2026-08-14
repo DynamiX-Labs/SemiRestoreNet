@@ -2,8 +2,12 @@
 
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-ee4c2c.svg)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Experiments Guide](https://img.shields.io/badge/Experiments-Defense_Guide-orange.svg)](EXPERIMENTS_AND_TRIALS.md)
+[![Citations](https://img.shields.io/badge/Physics-Citations_&_Derivations-purple.svg)](CITATIONS.md)
 [![Hardware](https://img.shields.io/badge/Hardware-NVIDIA_RTX_|_A100_|_H100-green.svg)](https://developer.nvidia.com/cuda-zone)
 [![ONNX](https://img.shields.io/badge/Deployment-ONNX_Runtime_1.16+-005CED.svg)](https://onnxruntime.ai/)
+
+> **Project Documentation Navigation:** [Experimental Trials & Ablations](EXPERIMENTS_AND_TRIALS.md) | [Mathematical Physics Derivations](CITATIONS.md) | [Apache 2.0 License](LICENSE)
 
 ---
 
