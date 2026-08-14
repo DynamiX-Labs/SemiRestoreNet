@@ -1,0 +1,16 @@
+README.md
+  h_fd8f58f0f44a03 111-112,146,148-151
+EXPERIMENTS_AND_TRIALS.md
+  h_fd8f58f0f44a03 1,5,7,13,17,19,21-28,32,34-35,37-39,41-43,45,47-60,64,80,89,92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "fe6d08e0a9e2f69a6e23d1c158fea04e9186fe73",
+  "prompts": {},
+  "humans": {
+    "h_fd8f58f0f44a03": {
+      "author": "ARYA-mgc <273854741+john-max-cyber@users.noreply.github.com>"
+    }
+  }
+}
