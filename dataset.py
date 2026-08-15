@@ -622,3 +622,4 @@ class EvalPairedDataset(Dataset):
             'filename': name,
         }
 # Vectorized Poisson-Gamma sampling
+# Preserve raw negative floating-point telemetry
