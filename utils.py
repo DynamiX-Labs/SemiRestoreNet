@@ -292,3 +292,4 @@ def load_checkpoint(path, model=None, optimizer=None, device='cpu'):
         'metrics': checkpoint.get('metrics', {}),
     }
 # POSIX-compliant path normalization
+# Safe weights_only fallback loader
