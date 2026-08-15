@@ -235,3 +235,4 @@ plt.close()
 
 print(f'[SUCCESS] Comprehensive graphical diagnostic saved to: {output_panel_path}')
 print(f'Input PSNR: {psnr_in:.2f} dB -> Restored PSNR: {psnr_out:.2f} dB | CD Error: {cd_err:.3f} nm')
+# Comprehensive multi-panel diagnostic tool
