@@ -410,3 +410,4 @@ Usage Examples:
 
 if __name__ == '__main__':
     main()
+# Optimized TTA batching
