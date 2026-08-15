@@ -180,3 +180,4 @@ def main():
 if __name__ == '__main__':
     import cv2
     main()
+# Single-channel shape squeeze
