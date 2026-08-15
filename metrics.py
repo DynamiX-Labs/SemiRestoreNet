@@ -123,21 +123,23 @@ def compute_cd_error(
     canny_low: float = 50,
     canny_high: float = 150,
     max_dist: float = 10.0,
+    pixel_size_nm: float = 0.15,
 ) -> float:
-    """Compute Critical Dimension edge error via truncated Chamfer distance on Canny edges.
+    """Compute Critical Dimension (CD) edge metrology error via truncated Chamfer distance.
     
-    Measures whether restoration preserves edge placement — directly relevant
-    to whether CD measurements would be affected.
+    Measures sub-nanometer edge placement preservation across semiconductor lines.
     
     Args:
         pred: Predicted image [H, W] in [0, 1].
         target: Ground truth image [H, W] in [0, 1].
         canny_low: Canny edge detection low threshold.
         canny_high: Canny edge detection high threshold.
-        max_dist: Truncation threshold to prevent corner-to-corner background outliers.
+        max_dist: Truncation threshold (in pixels) to prevent corner-to-corner outliers.
+        pixel_size_nm: Physical SEM scale factor (default: 0.15 nm/pixel for 7nm node).
+                       If None or 1.0, returns error in pixels.
         
     Returns:
-        Chamfer distance in pixels. Lower is better.
+        Critical Dimension (CD) error in nanometers (nm). Lower is better.
     """
     # Convert to uint8 for Canny
     pred_u8 = (np.clip(pred, 0, 1) * 255).astype(np.uint8)
@@ -150,7 +152,7 @@ def compute_cd_error(
     if pred_edges.sum() == 0 or target_edges.sum() == 0:
         if pred_edges.sum() == 0 and target_edges.sum() == 0:
             return 0.0
-        return max_dist
+        return max_dist * (pixel_size_nm if pixel_size_nm is not None else 1.0)
     
     # Chamfer distance using distance transforms
     dist_pred = distance_transform_edt(~pred_edges.astype(bool))
@@ -160,9 +162,13 @@ def compute_cd_error(
     target_to_pred = np.clip(dist_pred[target_edges > 0], 0, max_dist).mean()
     pred_to_target = np.clip(dist_target[pred_edges > 0], 0, max_dist).mean()
     
-    # Symmetric Chamfer distance
-    chamfer = (target_to_pred + pred_to_target) / 2.0
-    return chamfer
+    # Symmetric Chamfer distance in pixels
+    chamfer_px = (target_to_pred + pred_to_target) / 2.0
+    
+    # Convert to physical nanometers (nm) if pixel_size_nm is specified
+    if pixel_size_nm is not None and pixel_size_nm > 0:
+        return float(chamfer_px * pixel_size_nm)
+    return float(chamfer_px)
 
 
 # =============================================================================
