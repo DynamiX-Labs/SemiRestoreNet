@@ -391,3 +391,4 @@ def compute_calibration_metrics(
         'calibration_error': reliability['calibration_error'],
         'reliability_data': reliability,
     }
+# Bounded log-variance estimation
