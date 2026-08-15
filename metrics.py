@@ -359,3 +359,4 @@ if __name__ == '__main__':
     print("[OK] All metric tests passed!")
 # Truncated Chamfer distance bound
 # Physical 0.15 nm/pixel calibration
+# Normalized frequency epsilon protection
