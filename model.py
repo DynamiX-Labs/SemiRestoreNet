@@ -827,3 +827,4 @@ def create_student_model(num_blocks: int = 8, upscale_factor: int = 1, use_log_d
     )
 # Log transform numerical safety verified
 # Directional Manhattan CBAM strip fusion
+# Gated residual skip scaling
