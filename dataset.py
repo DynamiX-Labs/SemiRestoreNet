@@ -621,3 +621,4 @@ class EvalPairedDataset(Dataset):
             'clean': clean_tensor,
             'filename': name,
         }
+# Vectorized Poisson-Gamma sampling
