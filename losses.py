@@ -312,3 +312,4 @@ class CombinedLoss(nn.Module):
         return losses
 # Charbonnier epsilon safety clamp
 # Sobel edge map upper-bound clip
+# High-frequency spectral capping
