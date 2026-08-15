@@ -50,11 +50,12 @@ STUDENT_CONFIGS = {
 }
 
 
-def create_student(config_name: str = 'student_8', **kwargs) -> FullModel:
+def create_student(config_name: str = 'student_8', upscale_factor: int = 2, **kwargs) -> FullModel:
     """Create a student model from a named configuration.
     
     Args:
         config_name: Key from STUDENT_CONFIGS.
+        upscale_factor: Super-resolution factor (default: 2).
         **kwargs: Override any config parameter.
         
     Returns:
@@ -71,8 +72,8 @@ def create_student(config_name: str = 'student_8', **kwargs) -> FullModel:
         num_blocks=config['num_blocks'],
         num_feat=config.get('num_feat', 64),
         num_grow_ch=config.get('num_grow_ch', 32),
-        enable_uncertainty=True,  # ALWAYS include — student needs its own
-        mc_dropout_rate=config.get('mc_dropout_rate', 0.1),
+        upscale_factor=upscale_factor,
+        use_log_domain=config.get('use_log_domain', True),
     )
     
     return model
@@ -95,4 +96,4 @@ if __name__ == '__main__':
     
     for name in STUDENT_CONFIGS:
         model = create_student(name)
-        print(f"{name:20s} → {format_params(count_parameters(model))} parameters")
+        print(f"{name:20s} -> {format_params(count_parameters(model))} parameters")

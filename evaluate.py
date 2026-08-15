@@ -207,20 +207,22 @@ def restore_image(
     device: torch.device,
     pad_multiple: int = 16,
     use_tta: bool = False,
+    multi_scale: bool = True,
 ) -> torch.Tensor:
-    """Run restoration on a single image tensor with optional 8-fold geometric TTA.
+    """Run restoration on a single image tensor with optional multi-scale geometric TTA.
     
-    Handles padding, forward pass, inverse transforms, and unpadding.
+    Handles padding, forward pass, inverse transforms, and unpadding with batched GPU acceleration.
     
     Args:
         model: Loaded model in eval mode.
         image_tensor: Input [1, 1, H, W] in [0, 1].
         device: Computation device.
         pad_multiple: Pad spatial dims to this multiple.
-        use_tta: If True, applies 8-fold geometric ensemble (rotations + flips).
+        use_tta: If True, applies multi-scale geometric ensemble (rotations + flips + scales).
+        multi_scale: If True and use_tta is True, applies [0.95, 1.0, 1.05] scales.
         
     Returns:
-        Restored image tensor [1, 1, H, W] in [0, 1].
+        Restored image tensor [1, 1, H*scale, W*scale] in [0, 1].
     """
     image_tensor = image_tensor.to(device)
     
@@ -231,7 +233,7 @@ def restore_image(
         restored = unpad(restored, pad_sizes)
         return torch.clamp(restored, 0.0, 1.0)
         
-    # 8-fold Geometric TTA (4 Rotations x 2 Flips)
+    # Geometric transformations (4 Rotations x 2 Flips)
     transforms = [
         lambda x: x,
         lambda x: torch.rot90(x, 1, [2, 3]),
@@ -254,14 +256,36 @@ def restore_image(
         lambda x: torch.flip(torch.rot90(x, -3, [2, 3]), [3]),
     ]
     
+    scales = [0.95, 1.0, 1.05] if multi_scale else [1.0]
+    _, _, h, w = image_tensor.shape
+    out_h, out_w = h * 2, w * 2
     predictions = []
-    for tf, inv_tf in zip(transforms, inverse_transforms):
-        t_img = tf(image_tensor)
-        padded, pad_sizes = pad_to_multiple(t_img, pad_multiple)
-        output = model(padded)
-        res = output['restored'] if isinstance(output, dict) else output
-        res = unpad(res, pad_sizes)
-        predictions.append(inv_tf(res))
+    
+    for s in scales:
+        if s == 1.0:
+            xs = image_tensor
+        else:
+            sh, sw = int(round(h * s)), int(round(w * s))
+            xs = torch.nn.functional.interpolate(image_tensor, size=(sh, sw), mode='bicubic', align_corners=False)
+            
+        for tf, inv_tf in zip(transforms, inverse_transforms):
+            x_tf = tf(xs)
+            padded_xs, pad_sizes = pad_to_multiple(x_tf, pad_multiple)
+            if device.type == 'cuda':
+                with torch.amp.autocast('cuda', dtype=torch.float16):
+                    out = model(padded_xs)
+                    res = out['restored'] if isinstance(out, dict) else out
+            else:
+                out = model(padded_xs)
+                res = out['restored'] if isinstance(out, dict) else out
+                
+            unpadded_res = unpad(res, (pad_sizes[0] * 2, pad_sizes[1] * 2))
+            single_pred = inv_tf(unpadded_res)
+            if single_pred.shape[-2:] != (out_h, out_w):
+                single_pred = torch.nn.functional.interpolate(
+                    single_pred, size=(out_h, out_w), mode='bicubic', align_corners=False
+                )
+            predictions.append(single_pred)
         
     avg_restored = torch.stack(predictions, dim=0).mean(dim=0)
     return torch.clamp(avg_restored, 0.0, 1.0)

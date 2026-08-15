@@ -13,16 +13,15 @@ ENV/
 .venv/
 
 # PyTorch & Model Checkpoints (large binary files)
-checkpoints/*.pth
-checkpoints/*.pt
-checkpoints/*.ckpt
+checkpoints/
 *.pth
 *.pt
 *.ckpt
 *.safetensors
-!checkpoints/.gitkeep
+*.onnx
+*.npy
 
-# Tensorboard & Training Logs
+# Training runs & logs
 runs/
 .system_generated/
 *.log
@@ -31,8 +30,13 @@ runs/
 evaluation_results/
 restored_test_outputs/
 test_outputs/
+submission_outputs/
 submission_restored_outputs/
+inference_output/
+visual_test/
+preview_restored/
 Test_NoisyLR/
+train/
 
 # IDE & OS files
 .vscode/

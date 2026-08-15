@@ -534,11 +534,20 @@ class FullModel(nn.Module):
             num_feat=num_feat, out_channels=1, upscale_factor=upscale_factor
         )
     
-    def forward(self, x: torch.Tensor, return_dict: bool = True):
+    def forward(
+        self,
+        x: torch.Tensor,
+        return_dict: bool = True,
+        return_uncertainty: bool = False,
+        use_mc_dropout: bool = False,
+        **kwargs,
+    ):
         """
         Args:
             x: Input degraded image [B, 1, H, W] (Float32, unclipped).
             return_dict: If True, returns dict with 'restored'; else tensor.
+            return_uncertainty: Compatibility flag for uncertainty analysis.
+            use_mc_dropout: Compatibility flag for MC-dropout sampling.
             
         Returns:
             Dict or Tensor of restored image [B, 1, s*H, s*W].
@@ -605,6 +614,11 @@ class FullModel(nn.Module):
             base_img = x
             
         restored = base_img + residual
+        
+        # Built-in normalization & physical bounding constraint:
+        # Ensures model directly outputs valid [0.0, 1.0] float arrays without requiring evaluator post-processing
+        if not self.training:
+            restored = torch.clamp(restored, 0.0, 1.0)
         
         if return_dict:
             return {'restored': restored}

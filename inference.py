@@ -36,7 +36,7 @@ def infer_single_image(
         image_path: Path to input image.
         output_dir: Directory to save outputs.
         device: Computation device.
-        uncertainty_mode: 'realtime' (aleatoric only) or 'offline' (full uncertainty).
+        uncertainty_mode: 'realtime' (single-pass) or 'offline' (8-fold TTA ensemble).
     """
     os.makedirs(output_dir, exist_ok=True)
     name = Path(image_path).stem
@@ -45,89 +45,104 @@ def infer_single_image(
     img_tensor = load_image(image_path).to(device)  # [1, 1, H, W]
     print(f"Input: {image_path} | Shape: {img_tensor.shape}")
     
-    # Pad
+    # Check model upscale factor
+    upscale_factor = getattr(model, 'upscale_factor', 2)
+    
+    # Pad input
     padded, pad_sizes = pad_to_multiple(img_tensor, 16)
     
-    # Run uncertainty-aware inference
-    result = full_uncertainty_inference(model, padded, mode=uncertainty_mode)
-    
-    # Unpad
-    restored = unpad(result['restored'], pad_sizes)
-    restored = torch.clamp(restored, 0, 1)
-    
+    if uncertainty_mode == 'offline':
+        # 8-fold TTA with epistemic uncertainty estimation
+        transforms = [
+            lambda x: x,
+            lambda x: torch.rot90(x, 1, [2, 3]),
+            lambda x: torch.rot90(x, 2, [2, 3]),
+            lambda x: torch.rot90(x, 3, [2, 3]),
+            lambda x: torch.flip(x, [3]),
+            lambda x: torch.rot90(torch.flip(x, [3]), 1, [2, 3]),
+            lambda x: torch.rot90(torch.flip(x, [3]), 2, [2, 3]),
+            lambda x: torch.rot90(torch.flip(x, [3]), 3, [2, 3]),
+        ]
+        inv_transforms = [
+            lambda x: x,
+            lambda x: torch.rot90(x, -1, [2, 3]),
+            lambda x: torch.rot90(x, -2, [2, 3]),
+            lambda x: torch.rot90(x, -3, [2, 3]),
+            lambda x: torch.flip(x, [3]),
+            lambda x: torch.flip(torch.rot90(x, -1, [2, 3]), [3]),
+            lambda x: torch.flip(torch.rot90(x, -2, [2, 3]), [3]),
+            lambda x: torch.flip(torch.rot90(x, -3, [2, 3]), [3]),
+        ]
+        preds = []
+        for tf, inv_tf in zip(transforms, inv_transforms):
+            x_tf = tf(img_tensor)
+            p_tf, p_sizes = pad_to_multiple(x_tf, 16)
+            out_tf = model(p_tf)['restored']
+            unp_tf = unpad(out_tf, (p_sizes[0] * upscale_factor, p_sizes[1] * upscale_factor))
+            preds.append(inv_tf(unp_tf))
+        
+        preds_stacked = torch.stack(preds, dim=0)
+        restored = torch.clamp(preds_stacked.mean(dim=0), 0.0, 1.0)
+        epistemic_var = preds_stacked.var(dim=0)
+    else:
+        # Single-pass forward
+        output = model(padded)
+        restored = unpad(output['restored'], (pad_sizes[0] * upscale_factor, pad_sizes[1] * upscale_factor))
+        restored = torch.clamp(restored, 0.0, 1.0)
+        epistemic_var = None
+        
     # Save restored image
-    save_image(restored, os.path.join(output_dir, f'{name}_restored.png'))
-    
-    # Also get degradation info from a single forward pass
-    model.eval()
-    output = model(padded, return_uncertainty=True)
+    restored_out_path = os.path.join(output_dir, f'{name}_restored.png')
+    save_image(restored, restored_out_path)
     
     # ---- Visualization ----
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-    fig.suptitle(f'Inference: {Path(image_path).name}', fontsize=16)
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6), facecolor='#0D1117')
+    fig.suptitle(f'SemiRestoreNet Inference Diagnostic: {Path(image_path).name}', fontsize=14, color='white', fontweight='bold')
     
-    # Input
-    axes[0, 0].imshow(img_tensor.cpu().squeeze(), cmap='gray')
-    axes[0, 0].set_title('Input (degraded)')
-    axes[0, 0].axis('off')
+    # 1. Input image
+    inp_np = img_tensor.cpu().squeeze().numpy()
+    axes[0].imshow(inp_np, cmap='gray')
+    axes[0].set_title(f'1. SEM Input [{inp_np.shape[0]}x{inp_np.shape[1]}]', color='white', fontsize=12)
+    axes[0].axis('off')
     
-    # Restored
-    axes[0, 1].imshow(restored.cpu().squeeze(), cmap='gray')
-    axes[0, 1].set_title('Restored')
-    axes[0, 1].axis('off')
+    # 2. Restored output
+    res_np = restored.cpu().squeeze().numpy()
+    axes[1].imshow(res_np, cmap='gray')
+    axes[1].set_title(f'2. SemiRestoreNet Output [{res_np.shape[0]}x{res_np.shape[1]}] ({upscale_factor}x SR)', color='#58A6FF', fontsize=12)
+    axes[1].axis('off')
     
-    # Noise map
-    noise_map = unpad(output['noise_map'], pad_sizes)
-    axes[0, 2].imshow(noise_map.cpu().squeeze(), cmap='hot')
-    axes[0, 2].set_title(f"Noise Map (σ̂={output['noise_level'].item():.4f})")
-    axes[0, 2].axis('off')
-    
-    # Domain routing
-    routing = output['routing_weights'].cpu().squeeze().numpy()
-    labels = ['Speckle\n(log)', 'Gaussian\n(VST)', 'Mixed\n(identity)']
-    colors = ['#e94560', '#533483', '#0f3460']
-    bars = axes[1, 0].bar(labels, routing, color=colors)
-    axes[1, 0].set_title('Domain Routing Weights')
-    axes[1, 0].set_ylim(0, 1)
-    for bar, val in zip(bars, routing):
-        axes[1, 0].text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
-                        f'{val:.3f}', ha='center', fontsize=11)
-    
-    # Aleatoric uncertainty
-    if result.get('aleatoric_variance') is not None:
-        aleatoric = unpad(result['aleatoric_variance'], pad_sizes)
-        im = axes[1, 1].imshow(aleatoric.cpu().squeeze(), cmap='inferno')
-        axes[1, 1].set_title('Aleatoric Uncertainty (σ²)')
-        axes[1, 1].axis('off')
-        plt.colorbar(im, ax=axes[1, 1], fraction=0.046)
+    # 3. Uncertainty or High-Frequency Edge Map
+    axes[2].set_facecolor('#161B22')
+    if epistemic_var is not None:
+        var_np = epistemic_var.cpu().squeeze().numpy()
+        im = axes[2].imshow(var_np, cmap='inferno')
+        axes[2].set_title('3. 8-Fold TTA Epistemic Uncertainty (σ²)', color='#FFA657', fontsize=12)
+        axes[2].axis('off')
+        cbar = fig.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04)
+        cbar.ax.yaxis.set_tick_params(color='white')
+        plt.setp(plt.getp(cbar.ax.axes, 'yticklabels'), color='white')
     else:
-        axes[1, 1].text(0.5, 0.5, 'N/A', ha='center', va='center', fontsize=20)
-        axes[1, 1].set_title('Aleatoric Uncertainty')
-        axes[1, 1].axis('off')
-    
-    # Total uncertainty (if offline mode)
-    if result.get('total_variance') is not None and uncertainty_mode == 'offline':
-        total_var = unpad(result['total_variance'], pad_sizes)
-        im = axes[1, 2].imshow(total_var.cpu().squeeze(), cmap='inferno')
-        axes[1, 2].set_title(f'Total Uncertainty ({uncertainty_mode})')
-        axes[1, 2].axis('off')
-        plt.colorbar(im, ax=axes[1, 2], fraction=0.046)
-    else:
-        axes[1, 2].text(0.5, 0.5, 'Realtime mode\n(aleatoric only)',
-                        ha='center', va='center', fontsize=14)
-        axes[1, 2].set_title('Epistemic Uncertainty')
-        axes[1, 2].axis('off')
-    
+        # 1D Line profile
+        mid_y = res_np.shape[0] // 2
+        inp_up = cv2.resize(inp_np, (res_np.shape[1], res_np.shape[0]), interpolation=cv2.INTER_CUBIC)
+        axes[2].plot(inp_up[mid_y, :], color='#FF7B72', label='Input (Bicubic)', linestyle=':', alpha=0.7)
+        axes[2].plot(res_np[mid_y, :], color='#58A6FF', label='SemiRestoreNet', linewidth=1.8)
+        axes[2].set_title(f'3. Cross-Section Intensity Profile (Row Y={mid_y})', color='white', fontsize=12)
+        axes[2].set_xlabel('Spatial Position (X)', color='white', fontsize=10)
+        axes[2].set_ylabel('Electron Intensity', color='white', fontsize=10)
+        axes[2].tick_params(colors='white')
+        axes[2].grid(True, linestyle='--', alpha=0.2, color='white')
+        axes[2].legend(loc='upper right', facecolor='#21262D', edgecolor='none', labelcolor='white')
+        for spine in axes[2].spines.values():
+            spine.set_color('#30363D')
+            
     plt.tight_layout()
     viz_path = os.path.join(output_dir, f'{name}_visualization.png')
-    plt.savefig(viz_path, dpi=150, bbox_inches='tight')
+    plt.savefig(viz_path, dpi=150, bbox_inches='tight', facecolor=fig.get_facecolor())
     plt.close(fig)
     
-    print(f"Saved: {os.path.join(output_dir, f'{name}_restored.png')}")
-    print(f"Saved: {viz_path}")
-    print(f"Routing: Speckle={routing[0]:.3f}, Gaussian={routing[1]:.3f}, Mixed={routing[2]:.3f}")
-    print(f"Noise level: σ̂={output['noise_level'].item():.4f}")
-    print(f"Scale factor: ŝ={output['scale_factor'].item():.2f}")
+    print(f"[SUCCESS] Restored image saved to: {restored_out_path}")
+    print(f"[SUCCESS] Diagnostic visual saved to: {viz_path}")
 
 
 def main():
@@ -137,15 +152,24 @@ def main():
     parser.add_argument('--checkpoint', type=str, default='./checkpoints/best_model.pth')
     parser.add_argument('--uncertainty', type=str, default='realtime',
                         choices=['realtime', 'offline'],
-                        help='Uncertainty mode: realtime (1×) or offline (8-12×)')
+                        help='Uncertainty mode: realtime (1x single pass) or offline (8-fold TTA ensemble)')
     
     args = parser.parse_args()
     device = get_device()
     
-    # Load model
-    model = create_teacher_model().to(device)
+    # Detect upscale_factor from checkpoint if available
+    upscale_factor = 2
+    if os.path.isfile(args.checkpoint):
+        ckpt_data = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
+        sd = ckpt_data.get('model_state_dict', ckpt_data.get('state_dict', ckpt_data))
+        if isinstance(sd, dict) and 'restoration_head.head.0.weight' in sd:
+            if sd['restoration_head.head.0.weight'].shape[0] == 64:
+                upscale_factor = 1
+                
+    model = create_teacher_model(upscale_factor=upscale_factor).to(device)
     if os.path.isfile(args.checkpoint):
         load_checkpoint(args.checkpoint, model, device=device)
+        print(f"[INFO] Loaded checkpoint {args.checkpoint} (upscale_factor={upscale_factor})")
     else:
         print(f"[WARNING] No checkpoint at {args.checkpoint}, using random weights")
     model.eval()
@@ -154,4 +178,5 @@ def main():
 
 
 if __name__ == '__main__':
+    import cv2
     main()

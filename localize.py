@@ -186,6 +186,7 @@ def localize_pattern(
     
     # 2. Physics-Aware Restoration (if deep model is loaded)
     processed_search = search_f32.copy()
+    scale_x, scale_y = 1.0, 1.0
     if model is not None and device is not None:
         try:
             model.eval()
@@ -194,25 +195,37 @@ def localize_pattern(
                 out = model(tensor_in, return_uncertainty=False)
                 restored_tensor = out['restored'].squeeze().cpu().numpy()
                 processed_search = np.clip(restored_tensor, 0.0, 1.0)
+                out_h, out_w = processed_search.shape
+                scale_y = out_h / search_h
+                scale_x = out_w / search_w
         except Exception:
             processed_search = search_f32
+            scale_x, scale_y = 1.0, 1.0
             
-    # 3. SEM Charging Drift Removal & Bandpass Filtering
-    ref_proc = preprocess_sem_image(ref_f32)
+    # 3. Scale reference to match processed search image
+    if scale_x != 1.0 or scale_y != 1.0:
+        ref_scaled = cv2.resize(ref_f32, (int(ref_w * scale_x), int(ref_h * scale_y)), interpolation=cv2.INTER_CUBIC)
+    else:
+        ref_scaled = ref_f32
+            
+    # 4. SEM Charging Drift Removal & Bandpass Filtering
+    ref_proc = preprocess_sem_image(ref_scaled)
     search_proc = preprocess_sem_image(processed_search)
     
-    # 4. Hierarchical Multi-Scale Pyramid Sub-Pixel Matching
+    # 5. Hierarchical Multi-Scale Pyramid Sub-Pixel Matching
     sub_tl_x, sub_tl_y, confidence = hierarchical_multiscale_match(search_proc, ref_proc, levels=3)
     
-    # 5. Compute Exact Reference Center Coordinates
-    center_x = float(sub_tl_x + ref_w / 2.0)
-    center_y = float(sub_tl_y + ref_h / 2.0)
+    # 6. Map Coordinates back to input search image space
+    pred_tl_x = sub_tl_x / scale_x
+    pred_tl_y = sub_tl_y / scale_y
+    center_x = float(pred_tl_x + ref_w / 2.0)
+    center_y = float(pred_tl_y + ref_h / 2.0)
     
     return {
         "center_x": round(center_x, 4),
         "center_y": round(center_y, 4),
-        "top_left_x": round(sub_tl_x, 4),
-        "top_left_y": round(sub_tl_y, 4),
+        "top_left_x": round(pred_tl_x, 4),
+        "top_left_y": round(pred_tl_y, 4),
         "ref_width": ref_w,
         "ref_height": ref_h,
         "confidence": round(confidence, 5),
@@ -245,9 +258,15 @@ def load_restoration_model(weights_path: str = None, device: torch.device = None
         return None
         
     try:
-        model = create_teacher_model().to(device)
         ckpt = torch.load(target_path, map_location=device, weights_only=False)
         state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
+        
+        upscale_factor = 1
+        if isinstance(state_dict, dict) and 'restoration_head.head.0.weight' in state_dict:
+            if state_dict['restoration_head.head.0.weight'].shape[0] == 256:
+                upscale_factor = 2
+                
+        model = create_teacher_model(upscale_factor=upscale_factor).to(device)
         model.load_state_dict(state_dict, strict=False)
         model.eval()
         return model

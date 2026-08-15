@@ -163,11 +163,15 @@ def train_kd(config: dict):
     device = get_device()
     print(f"[KD] Device: {device}")
     
+    upscale_factor = config.get('upscale_factor', 2)
+    
     # ---- Load Teacher (frozen) ----
     teacher = create_teacher_model(
         num_feat=config.get('teacher_num_feat', 64),
         num_grow_ch=config.get('teacher_num_grow_ch', 32),
-        num_rrdb_blocks=tuple(config.get('teacher_num_rrdb_blocks', [8, 8, 5])),
+        num_rrdb_blocks=tuple(config.get('teacher_num_rrdb_blocks', [8, 8, 7])),
+        upscale_factor=upscale_factor,
+        use_log_domain=config.get('use_log_domain', True),
     ).to(device)
     
     teacher_ckpt = config.get('teacher_checkpoint', 'checkpoints/best_model.pth')
@@ -190,6 +194,7 @@ def train_kd(config: dict):
         num_blocks=student_blocks,
         num_feat=config.get('student_num_feat', 64),
         num_grow_ch=config.get('student_num_grow_ch', 32),
+        upscale_factor=upscale_factor,
         drop_path_rate=config.get('drop_path_rate', 0.05),
         use_log_domain=config.get('use_log_domain', True),
     ).to(device)

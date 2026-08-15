@@ -16,50 +16,79 @@ from generate_dataset import generate_sample_pair
 from localize import localize_pattern
 
 def run_benchmark(num_samples: int = 20, output_dir: str = "./evaluation_results"):
-    os.makedirs(output_dir, exist_ok=True)
-    
     results = []
     styles = ["DRAM", "FinFET"]
     
-    print(f"Generating and evaluating {num_samples} test samples...")
+    from localize import load_restoration_model
+    from utils import get_device
+    import csv
     
-    # Set seed for reproducible benchmark
-    np.random.seed(42)
+    device = get_device()
+    model = load_restoration_model(device=device)
+    if model is not None:
+        print(f"[INFO] SemiRestoreNet Denoising Model Enabled for Pattern Localization (Device: {device})")
     
-    for i in range(num_samples):
-        style = styles[i % 2]
-        noise_lvl = np.random.uniform(0.18, 0.40)
-        sample_id = f"{i+1:03d}"
-        
-        # Generate sample pair
-        ref_u8, search_u8, meta = generate_sample_pair(
-            style=style,
-            search_size=512,
-            ref_size=128,
-            noise_level=noise_lvl,
-        )
-        
-        # Run localization
-        pred = localize_pattern(ref_u8, search_u8)
-        
-        gt_cx, gt_cy = meta["center_x"], meta["center_y"]
-        pred_cx, pred_cy = pred["center_x"], pred["center_y"]
-        score = pred["confidence"]
-        
-        # Euclidean error
-        err = np.sqrt((pred_cx - gt_cx)**2 + (pred_cy - gt_cy)**2)
-        
-        results.append({
-            "id": sample_id,
-            "style": style,
-            "gt_cx": gt_cx,
-            "gt_cy": gt_cy,
-            "pred_cx": pred_cx,
-            "pred_cy": pred_cy,
-            "error_px": err,
-            "score": score,
-            "noise_level": noise_lvl,
-        })
+    csv_path = "data/sample_dataset/ground_truth.csv"
+    if os.path.exists(csv_path):
+        print(f"[INFO] Loading official benchmark dataset from {csv_path}...")
+        with open(csv_path, "r") as f:
+            rows = list(csv.DictReader(f))[:num_samples]
+            
+        for r in rows:
+            ref_path = os.path.join("data/sample_dataset", r["reference_file"])
+            search_path = os.path.join("data/sample_dataset", r["search_file"])
+            
+            ref_u8 = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
+            search_u8 = cv2.imread(search_path, cv2.IMREAD_GRAYSCALE)
+            
+            gt_cx, gt_cy = float(r["center_x"]), float(r["center_y"])
+            noise_lvl = float(r.get("noise_level", 0.25))
+            
+            pred = localize_pattern(ref_u8, search_u8, model=model, device=device)
+            pred_cx, pred_cy = pred["center_x"], pred["center_y"]
+            score = pred["confidence"]
+            err = np.sqrt((pred_cx - gt_cx)**2 + (pred_cy - gt_cy)**2)
+            
+            results.append({
+                "id": r["pair_id"],
+                "style": r["style"],
+                "gt_cx": gt_cx,
+                "gt_cy": gt_cy,
+                "pred_cx": pred_cx,
+                "pred_cy": pred_cy,
+                "error_px": err,
+                "score": score,
+                "noise_level": noise_lvl,
+            })
+    else:
+        print(f"[INFO] Generating and evaluating {num_samples} test samples...")
+        np.random.seed(42)
+        for i in range(num_samples):
+            style = styles[i % 2]
+            noise_lvl = np.random.uniform(0.18, 0.40)
+            sample_id = f"{i+1:03d}"
+            
+            ref_u8, search_u8, meta = generate_sample_pair(
+                style=style, search_size=512, ref_size=128, noise_level=noise_lvl,
+            )
+            
+            pred = localize_pattern(ref_u8, search_u8, model=model, device=device)
+            gt_cx, gt_cy = meta["center_x"], meta["center_y"]
+            pred_cx, pred_cy = pred["center_x"], pred["center_y"]
+            score = pred["confidence"]
+            err = np.sqrt((pred_cx - gt_cx)**2 + (pred_cy - gt_cy)**2)
+            
+            results.append({
+                "id": sample_id,
+                "style": style,
+                "gt_cx": gt_cx,
+                "gt_cy": gt_cy,
+                "pred_cx": pred_cx,
+                "pred_cy": pred_cy,
+                "error_px": err,
+                "score": score,
+                "noise_level": noise_lvl,
+            })
         
     # Print formatted table
     print("\n" + "="*80)
@@ -114,13 +143,15 @@ def run_benchmark(num_samples: int = 20, output_dir: str = "./evaluation_results
     axes[0].legend(loc='upper right')
     
     # Plot 2: Localization Error Distribution vs Matching Score
-    dram_errs = [r["error_px"] for r in results if r["style"] == "DRAM"]
-    dram_scores = [r["score"] for r in results if r["style"] == "DRAM"]
-    finfet_errs = [r["error_px"] for r in results if r["style"] == "FinFET"]
-    finfet_scores = [r["score"] for r in results if r["style"] == "FinFET"]
+    dram_errs = [r["error_px"] for r in results if r["style"].upper() == "DRAM"]
+    dram_scores = [r["score"] for r in results if r["style"].upper() == "DRAM"]
+    finfet_errs = [r["error_px"] for r in results if r["style"].upper() == "FINFET"]
+    finfet_scores = [r["score"] for r in results if r["style"].upper() == "FINFET"]
     
-    axes[1].scatter(dram_scores, dram_errs, color='#1f77b4', s=70, label='DRAM Pattern', marker='s')
-    axes[1].scatter(finfet_scores, finfet_errs, color='#ff7f0e', s=70, label='FinFET Pattern', marker='^')
+    if dram_scores:
+        axes[1].scatter(dram_scores, dram_errs, color='#1f77b4', s=70, label='DRAM Pattern', marker='s')
+    if finfet_scores:
+        axes[1].scatter(finfet_scores, finfet_errs, color='#ff7f0e', s=70, label='FinFET Pattern', marker='^')
     axes[1].axhline(mean_err, color='red', linestyle='--', label=f'Mean Error = {mean_err:.4f} px')
     axes[1].axhline(p95_err, color='green', linestyle=':', label=f'P95 Error = {p95_err:.4f} px')
     

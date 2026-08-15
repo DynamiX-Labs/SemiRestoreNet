@@ -29,7 +29,7 @@ lr_backbone_scale: 0.1                 # 0.1x LR for pretrained backbone (2.0e-6
 min_lr: 1.0e-7
 weight_decay: 1.0e-4
 warmup_epochs: 1                       # 1-epoch quick warmup
-total_epochs: 25                       # 25 fine-tuning epochs
+total_epochs: 10                       # 10 fast fine-tuning epochs
 patch_size: 128                        # 128x128 crop training (fast 1.1 it/s execution, zero VRAM swapping)
 batch_size: 2                          # 2 patches per batch
 accumulation_steps: 8                  # 8x accumulation = Effective Batch Size 16
