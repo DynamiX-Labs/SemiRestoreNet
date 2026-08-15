@@ -370,11 +370,14 @@ def train_kd(config: dict):
 def main():
     parser = argparse.ArgumentParser(description='Knowledge Distillation Training')
     parser.add_argument('--config', type=str, default='configs/train_config.yaml')
-    parser.add_argument('--train_data_dir', type=str, default=None)
-    parser.add_argument('--val_data_dir', type=str, default=None)
-    parser.add_argument('--teacher_checkpoint', type=str, default=None)
+    parser.add_argument('--student', type=str, default='student_8',
+                        choices=['student_8', 'student_16', 'student_4_lite'],
+                        help='Student configuration name')
     parser.add_argument('--student_blocks', type=int, default=None,
                         help='Number of RRDB blocks in student (8 or 16)')
+    parser.add_argument('--teacher_checkpoint', type=str, default='checkpoints/best_model.pth')
+    parser.add_argument('--train_data_dir', type=str, default=None)
+    parser.add_argument('--val_data_dir', type=str, default=None)
     parser.add_argument('--epochs', type=int, default=None)
     
     args = parser.parse_args()
@@ -386,19 +389,32 @@ def main():
     else:
         config = {}
     
+    # Map student name to block count
+    student_map = {'student_8': 8, 'student_16': 16, 'student_4_lite': 4}
+    if args.student_blocks:
+        config['student_num_blocks'] = args.student_blocks
+    else:
+        config['student_num_blocks'] = student_map.get(args.student, 8)
+        
+    if args.teacher_checkpoint:
+        config['teacher_checkpoint'] = args.teacher_checkpoint
+    if args.epochs:
+        config['total_epochs'] = args.epochs
     if args.train_data_dir:
         config['train_data_dir'] = args.train_data_dir
     if args.val_data_dir:
         config['val_data_dir'] = args.val_data_dir
-    if args.teacher_checkpoint:
-        config['teacher_checkpoint'] = args.teacher_checkpoint
-    if args.student_blocks:
-        config['student_num_blocks'] = args.student_blocks
-    if args.epochs:
-        config['total_epochs'] = args.epochs
-    
-    if 'train_data_dir' not in config:
-        parser.error("--train_data_dir is required")
+        
+    if not config.get('train_data_dir'):
+        if os.path.isdir('train/train/GT'):
+            config['train_data_dir'] = 'train/train/GT'
+        elif os.path.isdir('data/sample_dataset/reference'):
+            config['train_data_dir'] = 'data/sample_dataset/reference'
+        else:
+            config['train_data_dir'] = './data'
+            
+    if not config.get('val_data_dir'):
+        config['val_data_dir'] = config['train_data_dir']
     
     train_kd(config)
 
