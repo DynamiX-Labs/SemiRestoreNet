@@ -97,3 +97,4 @@ if __name__ == '__main__':
     for name in STUDENT_CONFIGS:
         model = create_student(name)
         print(f"{name:20s} -> {format_params(count_parameters(model))} parameters")
+# Calibrated growth channels
