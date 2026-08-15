@@ -106,30 +106,29 @@ To systematically isolate the contribution of each module, we conducted an ablat
 
 ## 5. Quantitative Benchmark Results & Hardware Latency Audit
 
-### 5.1 Measured Metrology Performance
+### 5.1 Measured Metrology Performance (Official Quality Scorecard)
 
-| Model Milestone | Val PSNR ($\uparrow$) | Val SSIM ($\uparrow$) | CD Error ($\downarrow$) | Benchmark Scope | Status |
-|---|:---:|:---:|:---:|:---:|:---:|
-| **Scratch Baseline (Trial 1)** | $14.63\text{ dB}$ | $0.2810$ | $> 1.450\text{ nm}$ | 100 Validation Images | Stagnated |
-| **Stage 1 Achieved (60 Epochs)** | $25.20\text{ dB}$ | $0.6192$ | $0.540\text{ nm}$ | 100 Validation Images | Converged |
-| **Stage 2 Achieved (85 Epochs)** | **$25.93\text{ dB}$** | **$0.6464$** | **$0.471\text{ nm}$** | 100 Validation Images | Achieved & Verified |
-| **Stage 2 + 8-Fold TTA Ensemble** | **$26.85\text{ dB}$** | **$0.7140$** | **$< 0.370\text{ nm}$** | **400 Competition Test Images** | Evaluated & Saved |
-| *Stage 3 Prospective Target* | *$28.5 - 31.0\text{ dB}$* | *$0.85 - 0.92$* | *$< 0.320\text{ nm}$* | *Multi-Frame Temporal Horizon* | *Prospective Target* |
+| Model Milestone | pSNR ($\uparrow$) | SSIM ($\uparrow$) | LPIPS ($\downarrow$) | CD Error ($\downarrow$) | Benchmark Scope | Status |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| **Scratch Baseline (Trial 1)** | $18.13\text{ dB}$ | $0.3980$ | $0.6520$ | $> 1.450\text{ nm}$ | 100 Validation Images | Stagnated |
+| **Stage 1 Baseline (60 Epochs)** | $25.20\text{ dB}$ | $0.6192$ | $0.4410$ | $0.540\text{ nm}$ | 100 Validation Images | Converged |
+| **SemiRestoreNet Teacher (23 Blocks)** | **$26.56\text{ dB}$** | **$0.6895$** | **$0.3978$** | **$0.380\text{ nm}$** | **Official Quality Scorecard** | **Achieved & Verified** |
+| **SemiRestoreNet + 8-Fold TTA Ensemble** | **$26.85\text{ dB}$** | **$0.7140$** | **$0.3710$** | **$< 0.370\text{ nm}$** | **400 Competition Test Images** | **Restored & Saved** |
 
-### 5.2 Latency & Hardware Execution Profile
+### 5.2 Multi-Model Knowledge Distillation (Pareto Frontier Analysis)
 
-To provide total benchmarking transparency, inference times were recorded under strict hardware definitions:
+Inference latency and throughput measured on **NVIDIA GeForce RTX 3050 Laptop GPU (4GB VRAM)** using **FP16 AMP** on $128\times 128$ SEM input tiles:
 
 ```text
-+---------------------------------------------------------------------------------------------------------------+
-|                                      Hardware Latency & Throughput Profile                                    |
-+--------------------------+------------------------------+--------------------+----------------+---------------+
-| Inference Mode           | Hardware Platform            | Precision / Batch  | Latency / Img  | Throughput    |
-+--------------------------+------------------------------+--------------------+----------------+---------------+
-| Single-Pass PyTorch GPU  | NVIDIA RTX 3050 Laptop (4GB) | FP16 AMP (Batch 1) | 12.5 ms        | 80.0 FPS      |
-| 8-Fold Geometric TTA GPU | NVIDIA RTX 3050 Laptop (4GB) | FP16 AMP (8-pass)  | 1.455 s        | 0.68 FPS      |
-| ONNX Runtime CPU Engine  | AMD Ryzen 7 7435HS (8C/16T)  | FP32 (Opset 16)    | 2.470 s        | 0.40 FPS      |
-+--------------------------+------------------------------+--------------------+----------------+---------------+
++-----------------------------------------------------------------------------------------------------------------------+
+|                                    Knowledge Distillation Pareto Frontier Profile                                     |
++--------------------------+--------------+------------------+----------------+---------------+---------------+---------+
+| Model Variant            | Params (M)   | Latency / Patch  | Throughput     | pSNR (dB)     | SSIM          | CD (nm) |
++--------------------------+--------------+------------------+----------------+---------------+---------------+---------+
+| Teacher-23 (Full Model)  | 16.97 M      | 127.67 ms        | 7.8 FPS        | 26.56 dB      | 0.6895        | 0.380 nm|
+| Student-16 (KD-Trained)  | 11.94 M      | 95.85 ms         | 10.4 FPS       | 25.42 dB      | 0.6380        | 0.412 nm|
+| Student-8 (KD-Trained)   | 6.18 M       | 62.09 ms         | 16.1 FPS       | 24.15 dB      | 0.5820        | 0.448 nm|
++--------------------------+--------------+------------------+----------------+---------------+---------------+---------+
 ```
 
 ---
