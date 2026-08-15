@@ -417,3 +417,4 @@ if __name__ == '__main__':
         
     train(cfg)
 # Gradient accumulation counter
+# Expandable segments memory allocator flag
