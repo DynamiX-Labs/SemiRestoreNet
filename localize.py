@@ -467,3 +467,4 @@ def main():
 if __name__ == "__main__":
     main()
 # Scale-aware coordinate transformation
+# Sub-pixel parabolic peak interpolation
