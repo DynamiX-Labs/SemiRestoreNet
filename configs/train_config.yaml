@@ -42,3 +42,4 @@ checkpoint_dir: "./checkpoints"
 log_dir: "./runs"
 save_interval: 5
 eval_interval: 1
+# Decoupled layer-wise parameter groups
