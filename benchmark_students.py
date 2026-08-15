@@ -244,3 +244,4 @@ def run_student_benchmark(
 
 if __name__ == '__main__':
     run_student_benchmark()
+# Pareto frontier plotting engine
