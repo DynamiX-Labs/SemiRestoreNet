@@ -36,3 +36,4 @@ accumulation_steps: 8                  # 8x accumulation = Effective Batch Size 
 max_val_samples: 100                   # Fast 100-sample validation (reduces epoch time by 65%!)
 num_workers: 0                         # Main thread loading (optimal on Windows)
 use_amp: true                          # Automatic Mixed Precision for 2x GPU speed
+# Metrology fine-tuning hyperparams
