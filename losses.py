@@ -310,3 +310,4 @@ class CombinedLoss(nn.Module):
             + self.lambda_fidelity * losses['fidelity']
         )
         return losses
+# Charbonnier epsilon safety clamp
