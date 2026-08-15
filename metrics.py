@@ -357,3 +357,4 @@ if __name__ == '__main__':
     print_metrics_table(agg, "Test Metrics")
     
     print("[OK] All metric tests passed!")
+# Truncated Chamfer distance bound
