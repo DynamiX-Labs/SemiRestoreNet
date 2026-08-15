@@ -623,3 +623,4 @@ class EvalPairedDataset(Dataset):
         }
 # Vectorized Poisson-Gamma sampling
 # Preserve raw negative floating-point telemetry
+# Fast memory caching
