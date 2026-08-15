@@ -422,3 +422,4 @@ def main():
 if __name__ == '__main__':
     main()
 # Multi-stage feature alignment
+# 1x1 conv projection alignment
