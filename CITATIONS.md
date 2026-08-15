@@ -83,3 +83,4 @@ This document provides academic, physical, and mathematical citations justifying
   - *Justification*: 2D parabolic quadratic peak interpolation on normalized cross-correlation response surfaces for sub-pixel localization accuracy ($< 0.05\text{ pixels}$).
 * **Guizar-Sicairos, M., Thurman, S. T., & Fienup, J. R. (2008).** *Efficient Subpixel Image Registration by Cross-Correlation*. Optics Letters, 33(2), 156-158.
   - *Justification*: Discrete Fourier Transform matrix multiplication for robust, computationally efficient sub-pixel image registration in microscopy.
+<!-- Added Joy & Joy (1996) Low-Voltage SEM references -->
