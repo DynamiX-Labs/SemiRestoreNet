@@ -291,3 +291,4 @@ def load_checkpoint(path, model=None, optimizer=None, device='cpu'):
         'epoch': checkpoint.get('epoch', 0),
         'metrics': checkpoint.get('metrics', {}),
     }
+# POSIX-compliant path normalization
