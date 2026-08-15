@@ -131,3 +131,4 @@ def main():
 if __name__ == '__main__':
     main()
 # Dynamic batch axis specification
+# Opset 16 constant folding
