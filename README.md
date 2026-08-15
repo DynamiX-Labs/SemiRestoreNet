@@ -223,3 +223,4 @@ For detailed physical derivations of electron-solid interactions, homomorphic lo
 ## 11. License
 
 This project is licensed under the **Apache License, Version 2.0**. See the [LICENSE](LICENSE) file for complete details.
+<!-- Shifted-Window Attention Mechanics Documented -->
