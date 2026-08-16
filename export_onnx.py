@@ -66,20 +66,37 @@ def export_to_onnx(
     os.makedirs(os.path.dirname(os.path.abspath(output_onnx_path)), exist_ok=True)
     print(f"[3/4] Exporting to ONNX at {output_onnx_path} (Opset {opset_version})...")
     
-    torch.onnx.export(
-        model,
-        (dummy_input, False),  # return_dict=False
-        output_onnx_path,
-        export_params=True,
-        opset_version=opset_version,
-        do_constant_folding=True,
-        input_names=['degraded_input'],
-        output_names=['restored_output'],
-        dynamic_axes={
-            'degraded_input': {0: 'batch_size', 2: 'height', 3: 'width'},
-            'restored_output': {0: 'batch_size', 2: 'out_height', 3: 'out_width'},
-        }
-    )
+    try:
+        torch.onnx.export(
+            model,
+            (dummy_input, False),  # return_dict=False
+            output_onnx_path,
+            export_params=True,
+            opset_version=opset_version,
+            do_constant_folding=True,
+            input_names=['degraded_input'],
+            output_names=['restored_output'],
+            dynamic_axes={
+                'degraded_input': {0: 'batch_size', 2: 'height', 3: 'width'},
+                'restored_output': {0: 'batch_size', 2: 'out_height', 3: 'out_width'},
+            },
+            dynamo=False,
+        )
+    except TypeError:
+        torch.onnx.export(
+            model,
+            (dummy_input, False),  # return_dict=False
+            output_onnx_path,
+            export_params=True,
+            opset_version=opset_version,
+            do_constant_folding=True,
+            input_names=['degraded_input'],
+            output_names=['restored_output'],
+            dynamic_axes={
+                'degraded_input': {0: 'batch_size', 2: 'height', 3: 'width'},
+                'restored_output': {0: 'batch_size', 2: 'out_height', 3: 'out_width'},
+            },
+        )
     
     file_size_mb = os.path.getsize(output_onnx_path) / (1024 * 1024)
     print(f"  -> ONNX export completed cleanly! File size: {file_size_mb:.2f} MB")

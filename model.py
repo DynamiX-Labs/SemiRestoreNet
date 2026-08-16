@@ -1,24 +1,32 @@
 """
 model.py — High-Performance Semiconductor Image Restoration & Super-Resolution Network.
 
-Architectural Faults Faced & Engineering Solutions History:
-------------------------------------------------------------
-FAULT 1: NaN Crashes on Negative Detector Float Inputs
-- Initial Issue: Physical SEM detectors output negative float values (e.g. -0.0374) due to electronic offsets.
-  Standard log transform ln(x) resulted in NaN/Inf gradient explosion and training collapse.
-- Solution Implemented: Created `SignedLogTransform` (y = sign(x) * ln(1 + |x| / eps)). This preserves input sign,
-  handles zero and negative floats smoothly, and converts multiplicative speckle into additive noise.
+Architectural Innovations & Engineering Solutions:
+---------------------------------------------------
+1. Restormer-Style Multi-Dconv Head Transposed Attention (MDTA):
+   - Computes cross-covariance across channels with linear spatial complexity O(HW C^2).
+   - Achieves an unconstrained global receptive field to capture periodic transistor pitches 
+     (FinFET arrays, DRAM capacitor cells) across the entire die without windowed boundary cuts.
 
-FAULT 2: PSNR Hard Plateau at 14.2–14.6 dB
-- Initial Issue: Training 16.86M parameters from scratch on small dataset led to severe stagnation and overfitting.
-  Furthermore, upscale_factor was configured to 1 (same-res) while benchmark data required 2x SR (128x128 -> 256x256).
-- Solution Implemented: Set upscale_factor=2 (PixelShuffle SR head) and transferred 23 pretrained Real-ESRGAN RRDB blocks.
-  This yielded an instant breakthrough jump from 14.6 dB to 28+ dB PSNR.
+2. Explicit Noise-Conditioned Gated Fusion Module (NoiseConditionedGFM):
+   - Computes an analytical high-frequency Laplacian residual / noise-level map.
+   - Explicitly conditions the soft routing alpha(x) in [0, 1] between linear and homomorphic 
+     log-domain streams, relieving early convolutions from re-learning noise variance estimation.
 
-FAULT 3: Blurry Nanoscale Sidewall Line Edges
-- Initial Issue: Isotropic 2D convolutions smoothed away fine vertical line-space grating structures.
-- Solution Implemented: Integrated Directional Anisotropic CBAM Attention (1x9 and 9x1 strip convolutions)
-  and Swin Transformer shifted-window self-attention for periodic array memory.
+3. Multi-Scale Manhattan Anisotropic Attention (MultiScaleManhattanAttention):
+   - Integrates multi-scale orthogonal strip convolutions: fine-pitch (1x7, 7x1) and 
+     coarse-pitch/wordlines (1x15, 15x1) alongside 7x7 spatial pooling to eliminate line collapse.
+
+4. Decoupled Two-Stage Restoration Head (DecoupledRestorationHead):
+   - Decouples native-resolution (1x) spatial phase denoising from sub-pixel (2x) PixelShuffle edge synthesis.
+
+5. Structural Reparameterization (RepBlock):
+   - Multi-branch (3x3 + 1x1 + Identity) during training -> algebraically collapsed into a single 
+     standard 3x3 convolution at inference via `switch_to_deploy()`. Zero runtime speed penalty.
+
+6. SignedLogTransform & Pretrained RRDB Backbone Transfer:
+   - Preserves exact signs and handles negative detector floats without NaN crashes.
+   - Retains 23-RRDB dense feature extraction transfer from Real-ESRGAN.
 """
 
 import math
@@ -60,7 +68,7 @@ class DropPath(nn.Module):
 
 
 # =============================================================================
-# Physics-Aware Homomorphic Signed Log Transformation & Gated Fusion
+# Physics-Aware Homomorphic Signed Log Transformation & Noise Estimation
 # =============================================================================
 
 class SignedLogTransform(nn.Module):
@@ -72,7 +80,7 @@ class SignedLogTransform(nn.Module):
         - Preserves exact sign for dark/unclipped pixels (no sign loss).
         - Smooth, monotonic, zero-centered (f(0) = 0).
         - Converts multiplicative Gamma speckle noise into additive noise for CNNs.
-        - Avoids NaN on unclipped negative input values.
+        - Avoids NaN on unclipped negative detector electronic offset floats.
     """
     def __init__(self, epsilon: float = 0.05):
         super().__init__()
@@ -84,28 +92,168 @@ class SignedLogTransform(nn.Module):
         return sign * torch.log1p(abs_x / self.epsilon)
 
 
-class DynamicGatedFusion(nn.Module):
-    """Spatial-channel dynamic gated fusion between linear and log-domain streams.
+class NoiseEstimator(nn.Module):
+    """Estimates local high-frequency noise variance and SNR map from input telemetry."""
+    def __init__(self, in_channels: int = 1, out_feat: int = 16):
+        super().__init__()
+        laplacian = torch.tensor([[0., 1., 0.], [1., -4., 1.], [0., 1., 0.]], dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        self.register_buffer('laplacian', laplacian)
+        self.net = nn.Sequential(
+            nn.Conv2d(in_channels, out_feat, 3, 1, 1),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(out_feat, out_feat, 3, 1, 1),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        residual = F.conv2d(x, self.laplacian, padding=1)
+        abs_res = torch.abs(residual)
+        return self.net(abs_res)
+
+
+class NoiseConditionedGFM(nn.Module):
+    """Spatial-channel dynamic gated fusion conditioned on explicit local noise level.
     
-    Computes learnable soft gate alpha(x) in [0, 1] per spatial-channel location:
-        alpha = Sigmoid(Conv1x1(LeakyReLU(Conv3x3([F_lin, F_log]))))
+    Computes soft gate alpha(x) in [0, 1] per spatial-channel location:
+        alpha = Sigmoid(Conv1x1(LeakyReLU(Conv3x3([F_lin, F_log, F_noise]))))
         F_fused = alpha * F_log + (1 - alpha) * F_lin + Conv_proj([F_lin, F_log])
     """
-    def __init__(self, num_feat: int = 64):
+    def __init__(self, num_feat: int = 64, noise_feat: int = 16):
         super().__init__()
+        self.noise_feat = noise_feat
+        self.noise_estimator = NoiseEstimator(in_channels=1, out_feat=noise_feat)
         self.gate = nn.Sequential(
-            nn.Conv2d(num_feat * 2, num_feat, 3, 1, 1),
+            nn.Conv2d(num_feat * 2 + noise_feat, num_feat, 3, 1, 1),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Conv2d(num_feat, num_feat, 1, 1, 0),
             nn.Sigmoid(),
         )
         self.proj = nn.Conv2d(num_feat * 2, num_feat, 1, 1, 0)
         
-    def forward(self, feat_lin: torch.Tensor, feat_log: torch.Tensor) -> torch.Tensor:
-        cat_feat = torch.cat([feat_lin, feat_log], dim=1)
-        alpha = self.gate(cat_feat)
+    def forward(self, feat_lin: torch.Tensor, feat_log: torch.Tensor, raw_input: torch.Tensor = None) -> torch.Tensor:
+        if raw_input is not None:
+            feat_noise = self.noise_estimator(raw_input)
+        else:
+            b, _, h, w = feat_lin.shape
+            feat_noise = torch.zeros(b, self.noise_feat, h, w, device=feat_lin.device, dtype=feat_lin.dtype)
+            
+        cat_gate = torch.cat([feat_lin, feat_log, feat_noise], dim=1)
+        alpha = self.gate(cat_gate)
+        cat_proj = torch.cat([feat_lin, feat_log], dim=1)
         gated = alpha * feat_log + (1.0 - alpha) * feat_lin
-        return gated + self.proj(cat_feat)
+        return gated + self.proj(cat_proj)
+
+
+class FiLMNoiseConditioner(nn.Module):
+    """FiLM-style noise conditioning: predict noise level scalar, modulate features.
+    
+    Uses the NoiseEstimator feature map to:
+    1. Predict a noise-level scalar (supervised with auxiliary MSE loss)
+    2. Modulate main trunk features via Feature-wise Linear Modulation (FiLM):
+       output = (1 + gamma) * features + beta
+    """
+    def __init__(self, noise_feat: int = 16, num_feat: int = 64):
+        super().__init__()
+        self.noise_predictor = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(noise_feat, 32),
+            nn.ReLU(inplace=True),
+            nn.Linear(32, 1),
+            nn.Sigmoid(),  # noise_level is in [0, 1]
+        )
+        self.gamma_net = nn.Sequential(
+            nn.Linear(1, num_feat),
+            nn.Tanh(),  # scale modulation in [-1, 1]
+        )
+        self.beta_net = nn.Linear(1, num_feat)
+    
+    def forward(self, noise_features: torch.Tensor, main_features: torch.Tensor):
+        """Args:
+            noise_features: [B, noise_feat, H, W] from NoiseEstimator
+            main_features: [B, num_feat, H, W] trunk features to modulate
+        Returns:
+            modulated_features: [B, num_feat, H, W]
+            noise_level_pred: [B, 1] predicted noise level scalar
+        """
+        noise_level_pred = self.noise_predictor(noise_features)  # [B, 1]
+        gamma = self.gamma_net(noise_level_pred).unsqueeze(-1).unsqueeze(-1)  # [B, C, 1, 1]
+        beta = self.beta_net(noise_level_pred).unsqueeze(-1).unsqueeze(-1)
+        modulated = (1.0 + gamma) * main_features + beta
+        return modulated, noise_level_pred
+
+
+# Backwards compatibility alias
+DynamicGatedFusion = NoiseConditionedGFM
+
+
+# =============================================================================
+# Structural Reparameterization Block (RepBlock)
+# =============================================================================
+
+class RepBlock(nn.Module):
+    """Structural Reparameterization Block (RepVGG-style for Fast Student Inference).
+    
+    Training Mode:
+        - 3x3 Conv branch (rich local context)
+        - 1x1 Conv branch (cross-channel mixing)
+        - Identity skip branch (if in_channels == out_channels)
+    Inference Mode (post switch_to_deploy()):
+        - Single mathematically equivalent 3x3 Conv kernel.
+        - Exactly 0% speed penalty and 0% memory overhead at runtime!
+    """
+    def __init__(self, in_channels: int = 64, out_channels: int = 64, act_layer=nn.LeakyReLU):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.is_deployed = False
+        
+        self.conv3x3 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=True)
+        self.conv1x1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0, bias=True)
+        self.has_identity = (in_channels == out_channels)
+        self.act = act_layer(negative_slope=0.2, inplace=True)
+        self.rbr_reparam = None
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.is_deployed:
+            return self.act(self.rbr_reparam(x))
+        
+        out = self.conv3x3(x) + self.conv1x1(x)
+        if self.has_identity:
+            out = out + x
+        return self.act(out)
+        
+    def switch_to_deploy(self):
+        """Collapses multi-branch weights into a single standard 3x3 Conv2d layer."""
+        if self.is_deployed:
+            return
+        
+        w3 = self.conv3x3.weight.data
+        b3 = self.conv3x3.bias.data if self.conv3x3.bias is not None else torch.zeros(self.out_channels, device=w3.device)
+        
+        # Pad 1x1 kernel to 3x3
+        w1 = F.pad(self.conv1x1.weight.data, (1, 1, 1, 1))
+        b1 = self.conv1x1.bias.data if self.conv1x1.bias is not None else torch.zeros(self.out_channels, device=w3.device)
+        
+        # Identity kernel
+        if self.has_identity:
+            w_id = torch.zeros_like(w3)
+            for i in range(self.in_channels):
+                w_id[i, i, 1, 1] = 1.0
+        else:
+            w_id = torch.zeros_like(w3)
+        
+        fused_w = w3 + w1 + w_id
+        fused_b = b3 + b1
+        
+        self.rbr_reparam = nn.Conv2d(self.in_channels, self.out_channels, kernel_size=3, padding=1, bias=True)
+        self.rbr_reparam.weight.data = fused_w
+        self.rbr_reparam.bias.data = fused_b
+        
+        # Remove training branches to free memory
+        del self.conv3x3
+        del self.conv1x1
+        self.is_deployed = True
 
 
 # =============================================================================
@@ -150,7 +298,79 @@ class RRDB(nn.Module):
 
 
 # =============================================================================
-# Shifted-Window Self-Attention (Swin Transformer)
+# Restormer-Style Multi-Dconv Head Transposed Attention (MDTA) & GDFN
+# =============================================================================
+
+class MDTA(nn.Module):
+    """Multi-Dconv Head Transposed Attention (Restormer-style).
+    
+    Computes cross-covariance across channels with linear spatial complexity O(HW C^2)
+    and an unconstrained global receptive field to capture periodic transistor pitch arrays.
+    """
+    def __init__(self, dim: int = 64, num_heads: int = 4, bias: bool = False):
+        super().__init__()
+        self.num_heads = num_heads
+        self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
+        
+        self.qkv = nn.Conv2d(dim, dim * 3, kernel_size=1, bias=bias)
+        self.qkv_dwconv = nn.Conv2d(dim * 3, dim * 3, kernel_size=3, stride=1, padding=1, groups=dim * 3, bias=bias)
+        self.project_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b, c, h, w = x.shape
+        qkv = self.qkv_dwconv(self.qkv(x))
+        q, k, v = qkv.chunk(3, dim=1)
+        
+        q = rearrange(q, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+        k = rearrange(k, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+        v = rearrange(v, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+        
+        q = torch.nn.functional.normalize(q, dim=-1)
+        k = torch.nn.functional.normalize(k, dim=-1)
+        
+        attn = (q @ k.transpose(-2, -1)) * self.temperature
+        attn = attn.softmax(dim=-1)
+        
+        out = (attn @ v)
+        out = rearrange(out, 'b head c (h w) -> b (head c) h w', head=self.num_heads, h=h, w=w)
+        out = self.project_out(out)
+        return out
+
+
+class GDFN(nn.Module):
+    """Gated-Dconv Feed-Forward Network with GELU gating."""
+    def __init__(self, dim: int = 64, ffn_expansion_factor: float = 2.0, bias: bool = False):
+        super().__init__()
+        hidden_features = int(dim * ffn_expansion_factor)
+        self.project_in = nn.Conv2d(dim, hidden_features * 2, kernel_size=1, bias=bias)
+        self.dwconv = nn.Conv2d(hidden_features * 2, hidden_features * 2, kernel_size=3, stride=1, padding=1, groups=hidden_features * 2, bias=bias)
+        self.project_out = nn.Conv2d(hidden_features, dim, kernel_size=1, bias=bias)
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x1, x2 = self.dwconv(self.project_in(x)).chunk(2, dim=1)
+        x = F.gelu(x1) * x2
+        x = self.project_out(x)
+        return x
+
+
+class RestormerBlock(nn.Module):
+    """Restormer Block with MDTA + GDFN and GroupNorm (LayerNorm)."""
+    def __init__(self, dim: int = 64, num_heads: int = 4, ffn_expansion_factor: float = 2.0, drop_path_rate: float = 0.0):
+        super().__init__()
+        self.norm1 = nn.GroupNorm(num_groups=1, num_channels=dim)
+        self.attn = MDTA(dim=dim, num_heads=num_heads)
+        self.norm2 = nn.GroupNorm(num_groups=1, num_channels=dim)
+        self.ffn = GDFN(dim=dim, ffn_expansion_factor=ffn_expansion_factor)
+        self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0.0 else nn.Identity()
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x + self.drop_path(self.attn(self.norm1(x)))
+        x = x + self.drop_path(self.ffn(self.norm2(x)))
+        return x
+
+
+# =============================================================================
+# Shifted-Window Self-Attention (Swin Transformer - Legacy / Configurable)
 # =============================================================================
 
 class WindowAttention(nn.Module):
@@ -164,13 +384,11 @@ class WindowAttention(nn.Module):
         head_dim = dim // num_heads
         self.scale = head_dim ** -0.5
         
-        # Relative position bias table
         self.relative_position_bias_table = nn.Parameter(
             torch.zeros((2 * window_size - 1) * (2 * window_size - 1), num_heads)
         )
         nn.init.trunc_normal_(self.relative_position_bias_table, std=0.02)
         
-        # Relative position index
         coords_h = torch.arange(window_size)
         coords_w = torch.arange(window_size)
         coords = torch.stack(torch.meshgrid([coords_h, coords_w], indexing='ij'))
@@ -356,7 +574,7 @@ class SwinTransformerBlock(nn.Module):
 
 
 # =============================================================================
-# Anisotropic Directional Defect Attention Module (CBAM)
+# Multi-Scale Manhattan Anisotropic Attention Module
 # =============================================================================
 
 class ChannelAttention(nn.Module):
@@ -377,93 +595,112 @@ class ChannelAttention(nn.Module):
         return self.sigmoid(avg_out + max_out)
 
 
-class AnisotropicSpatialAttention(nn.Module):
-    """Directional Strip + 2D Spatial Attention for semiconductor line gratings.
+class MultiScaleManhattanAttention(nn.Module):
+    """Multi-Scale Orthogonal Strip + 2D Spatial Attention for Manhattan chip layouts.
     
     Combines:
-        - 1x9 horizontal strip conv (horizontal gates/wordlines)
-        - 9x1 vertical strip conv (vertical fins/bitlines)
-        - 7x7 standard 2D spatial conv (point defect anomalies)
+        - Fine line-space pitch: 1x7 horizontal and 7x1 vertical strip convs
+        - Wide wordlines/buslines: 1x15 horizontal and 15x1 vertical strip convs
+        - Point defect anomalies & corners: 7x7 standard 2D spatial conv
     """
-    def __init__(self, kernel_size: int = 7, strip_kernel: int = 9):
+    def __init__(self, in_planes: int = 64, ratio: int = 16):
         super().__init__()
-        self.conv_2d = nn.Conv2d(2, 1, kernel_size, padding=kernel_size // 2, bias=False)
-        self.conv_h = nn.Conv2d(2, 1, (1, strip_kernel), padding=(0, strip_kernel // 2), bias=False)
-        self.conv_v = nn.Conv2d(2, 1, (strip_kernel, 1), padding=(strip_kernel // 2, 0), bias=False)
-        self.fuse = nn.Conv2d(3, 1, 1, bias=False)
+        self.ca = ChannelAttention(in_planes, ratio)
+        
+        self.conv_2d = nn.Conv2d(2, 1, 7, padding=3, bias=False)
+        self.conv_h7 = nn.Conv2d(2, 1, (1, 7), padding=(0, 3), bias=False)
+        self.conv_v7 = nn.Conv2d(2, 1, (7, 1), padding=(3, 0), bias=False)
+        self.conv_h15 = nn.Conv2d(2, 1, (1, 15), padding=(0, 7), bias=False)
+        self.conv_v15 = nn.Conv2d(2, 1, (15, 1), padding=(7, 0), bias=False)
+        self.fuse = nn.Conv2d(5, 1, 1, bias=False)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.ca(x) * x
         avg_out = torch.mean(x, dim=1, keepdim=True)
         max_out, _ = torch.max(x, dim=1, keepdim=True)
         x_cat = torch.cat([avg_out, max_out], dim=1)
         
-        map_2d = self.conv_2d(x_cat)
-        map_h = self.conv_h(x_cat)
-        map_v = self.conv_v(x_cat)
+        m_2d = self.conv_2d(x_cat)
+        m_h7 = self.conv_h7(x_cat)
+        m_v7 = self.conv_v7(x_cat)
+        m_h15 = self.conv_h15(x_cat)
+        m_v15 = self.conv_v15(x_cat)
         
-        fused = self.fuse(torch.cat([map_2d, map_h, map_v], dim=1))
-        return self.sigmoid(fused)
+        fused = self.fuse(torch.cat([m_2d, m_h7, m_v7, m_h15, m_v15], dim=1))
+        return self.sigmoid(fused) * x
 
 
-class CBAM(nn.Module):
-    """Directional Anisotropic CBAM for sharpening nanoscale defect boundaries."""
-    def __init__(self, in_planes: int = 64, ratio: int = 16, kernel_size: int = 7):
-        super().__init__()
-        self.ca = ChannelAttention(in_planes, ratio)
-        self.sa = AnisotropicSpatialAttention(kernel_size=kernel_size)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.ca(x) * x
-        x = self.sa(x) * x
-        return x
+# Backwards compatibility alias
+CBAM = MultiScaleManhattanAttention
 
 
 # =============================================================================
-# Restoration & Super-Resolution Head
+# Decoupled Two-Stage Restoration & Super-Resolution Head
 # =============================================================================
 
-class RestorationHead(nn.Module):
-    """Restoration Head supporting 1x same-resolution and 2x super-resolution."""
+class DecoupledRestorationHead(nn.Module):
+    """Decoupled Two-Stage Restoration Head supporting 1x same-res and 2x super-resolution.
     
+    Stage 1: Native-resolution (1x) structural feature denoising and spatial phase alignment.
+    Stage 2: High-precision sub-pixel (2x) PixelShuffle edge synthesis.
+    """
     def __init__(self, num_feat: int = 64, out_channels: int = 1, upscale_factor: int = 1):
         super().__init__()
         self.upscale_factor = upscale_factor
         
+        # Stage 1: Native resolution refiner
+        self.native_refiner = nn.Sequential(
+            nn.Conv2d(num_feat, num_feat, 3, 1, 1),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(num_feat, num_feat, 3, 1, 1),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+        
+        # Stage 2: Super-Resolution / Output Projection
         if upscale_factor == 2:
-            self.head = nn.Sequential(
+            self.sr_head = nn.Sequential(
                 nn.Conv2d(num_feat, num_feat * 4, 3, 1, 1),
                 nn.PixelShuffle(2),
                 nn.LeakyReLU(0.2, inplace=True),
-                nn.Conv2d(num_feat, out_channels, 3, 1, 1),
-            )
-        else:
-            self.head = nn.Sequential(
                 nn.Conv2d(num_feat, num_feat, 3, 1, 1),
                 nn.LeakyReLU(0.2, inplace=True),
                 nn.Conv2d(num_feat, out_channels, 3, 1, 1),
             )
-    
+        else:
+            self.sr_head = nn.Sequential(
+                nn.Conv2d(num_feat, num_feat, 3, 1, 1),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Conv2d(num_feat, out_channels, 3, 1, 1),
+            )
+            
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.head(x)
+        x_refined = self.native_refiner(x) + x
+        return self.sr_head(x_refined)
+
+
+# Backwards compatibility alias
+RestorationHead = DecoupledRestorationHead
 
 
 # =============================================================================
-# Full Model: SemiRestoreNet (23 RRDB + 2 Swin + CBAM + Dual-Domain + Highway)
+# Full Model: SemiRestoreNet (23 RRDB / RepBlock + MDTA/Swin + Manhattan Attention)
 # =============================================================================
 
 class FullModel(nn.Module):
-    """Deep Hybrid Backbone for Semiconductor Image Restoration & Super-Resolution.
+    """Next-Generation Hybrid Backbone for Semiconductor Image Restoration & Super-Resolution.
     
     Args:
         in_channels: Input channels (default: 1 for grayscale SEM).
         num_feat: Intermediate feature channels (default: 64).
         num_grow_ch: RDB growth channels (default: 32).
         num_rrdb_blocks: Tuple of blocks per stage (default: (8, 8, 7) = 23 blocks).
-        window_size: Base Swin window size (default: 8).
+        attention_type: 'mdta' (Restormer Transposed Attention, default) or 'swin' (Shifted Window).
+        window_size: Base Swin window size when attention_type='swin' (default: 8).
         upscale_factor: 1 for same-res denoising, 2 for 2x super-resolution.
         drop_path_rate: Stochastic depth rate (default: 0.1).
-        use_log_domain: If True, enables dynamic gated homomorphic log-domain stream.
+        use_log_domain: If True, enables dynamic noise-conditioned homomorphic log stream.
+        use_repblock: If True, uses structural reparameterization blocks instead of RRDBs.
     """
     
     def __init__(
@@ -472,53 +709,76 @@ class FullModel(nn.Module):
         num_feat: int = 64,
         num_grow_ch: int = 32,
         num_rrdb_blocks: tuple = (8, 8, 7),
+        attention_type: str = 'mdta',
         window_size: int = 8,
         upscale_factor: int = 1,
         drop_path_rate: float = 0.1,
         use_log_domain: bool = True,
+        use_repblock: bool = False,
     ):
         super().__init__()
         self.upscale_factor = upscale_factor
         self.num_rrdb_blocks = num_rrdb_blocks
+        self.attention_type = attention_type.lower()
         self.use_log_domain = use_log_domain
+        self.use_repblock = use_repblock
         
         # 1. Shallow Feature Extraction (Linear Path)
         self.conv_first = nn.Conv2d(in_channels, num_feat, 3, 1, 1)
         
-        # 1b. Dynamic Gated Homomorphic Log Stream (Signed Log for Speckle)
+        # 1b. Dynamic Noise-Conditioned Homomorphic Log Stream (Signed Log for Speckle)
         if use_log_domain:
             self.log_transform = SignedLogTransform(epsilon=0.05)
             self.conv_log = nn.Conv2d(in_channels, num_feat, 3, 1, 1)
-            self.fusion = DynamicGatedFusion(num_feat)
+            self.fusion = NoiseConditionedGFM(num_feat=num_feat, noise_feat=16)
+            # FiLM noise conditioner: predicts noise level + modulates trunk features
+            self.film_conditioner = FiLMNoiseConditioner(noise_feat=16, num_feat=num_feat)
         
-        # 2. Stage 1: Dense Convolutions (Low-level edge features)
-        self.stage1 = nn.ModuleList([
-            RRDB(num_feat, num_grow_ch) for _ in range(num_rrdb_blocks[0])
-        ])
+        # 2. Stage 1: Dense Convolutions / RepBlocks (Low-level edge features)
+        if use_repblock:
+            self.stage1 = nn.ModuleList([
+                RepBlock(num_feat, num_feat) for _ in range(num_rrdb_blocks[0])
+            ])
+        else:
+            self.stage1 = nn.ModuleList([
+                RRDB(num_feat, num_grow_ch) for _ in range(num_rrdb_blocks[0])
+            ])
         
-        # 3. Swin Block 1 (Window=8)
-        self.swin1 = SwinTransformerBlock(
-            dim=num_feat, num_heads=4, window_size=window_size, drop_path_rate=drop_path_rate
-        )
+        # 3. Attention Block 1 (Global MDTA or Shifted-Window Swin)
+        if self.attention_type == 'mdta':
+            self.attn1 = RestormerBlock(dim=num_feat, num_heads=4, drop_path_rate=drop_path_rate)
+        else:
+            self.attn1 = SwinTransformerBlock(dim=num_feat, num_heads=4, window_size=window_size, drop_path_rate=drop_path_rate)
         
-        # 4. Stage 2: Dense Convolutions (Mid-level grating array features)
-        self.stage2 = nn.ModuleList([
-            RRDB(num_feat, num_grow_ch) for _ in range(num_rrdb_blocks[1])
-        ])
+        # 4. Stage 2: Dense Convolutions / RepBlocks (Mid-level grating array features)
+        if use_repblock:
+            self.stage2 = nn.ModuleList([
+                RepBlock(num_feat, num_feat) for _ in range(num_rrdb_blocks[1])
+            ])
+        else:
+            self.stage2 = nn.ModuleList([
+                RRDB(num_feat, num_grow_ch) for _ in range(num_rrdb_blocks[1])
+            ])
         
-        # 5. Swin Block 2 (Window=16 for long-range periodic array regularities)
-        swin2_window = min(window_size * 2, 16)
-        self.swin2 = SwinTransformerBlock(
-            dim=num_feat, num_heads=4, window_size=swin2_window, drop_path_rate=drop_path_rate
-        )
+        # 5. Attention Block 2
+        if self.attention_type == 'mdta':
+            self.attn2 = RestormerBlock(dim=num_feat, num_heads=4, drop_path_rate=drop_path_rate)
+        else:
+            swin2_window = min(window_size * 2, 16)
+            self.attn2 = SwinTransformerBlock(dim=num_feat, num_heads=4, window_size=swin2_window, drop_path_rate=drop_path_rate)
         
-        # 6. Stage 3: Dense Convolutions (High-level abstract features)
-        self.stage3 = nn.ModuleList([
-            RRDB(num_feat, num_grow_ch) for _ in range(num_rrdb_blocks[2])
-        ])
+        # 6. Stage 3: Dense Convolutions / RepBlocks (High-level abstract features)
+        if use_repblock:
+            self.stage3 = nn.ModuleList([
+                RepBlock(num_feat, num_feat) for _ in range(num_rrdb_blocks[2])
+            ])
+        else:
+            self.stage3 = nn.ModuleList([
+                RRDB(num_feat, num_grow_ch) for _ in range(num_rrdb_blocks[2])
+            ])
         
-        # 7. Directional Anisotropic Defect Attention (CBAM)
-        self.cbam = CBAM(num_feat)
+        # 7. Multi-Scale Manhattan Anisotropic Defect Attention
+        self.cbam = MultiScaleManhattanAttention(num_feat)
         
         # 8. Trunk Convolution
         self.conv_body = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
@@ -529,11 +789,27 @@ class FullModel(nn.Module):
         self.gamma1 = nn.Parameter(torch.tensor(0.1))
         self.gamma2 = nn.Parameter(torch.tensor(0.1))
         
-        # 9. Reconstruction Head
-        self.restoration_head = RestorationHead(
+        # 9. Decoupled Two-Stage Reconstruction Head
+        self.restoration_head = DecoupledRestorationHead(
             num_feat=num_feat, out_channels=1, upscale_factor=upscale_factor
         )
-    
+
+    @property
+    def swin1(self):
+        """Backward compatibility alias for attention stage 1."""
+        return self.attn1
+
+    @property
+    def swin2(self):
+        """Backward compatibility alias for attention stage 2."""
+        return self.attn2
+
+    def switch_to_deploy(self):
+        """Collapses all RepBlocks in the model for zero-latency deployment."""
+        for m in self.modules():
+            if isinstance(m, RepBlock):
+                m.switch_to_deploy()
+
     def forward(
         self,
         x: torch.Tensor,
@@ -552,41 +828,44 @@ class FullModel(nn.Module):
         Returns:
             Dict or Tensor of restored image [B, 1, s*H, s*W].
         """
-        # Shallow features with optional dynamic gated homomorphic fusion
         feat_lin = self.conv_first(x)
+        noise_level_pred = None
         if self.use_log_domain:
             feat_log = self.conv_log(self.log_transform(x))
-            feat_first = self.fusion(feat_lin, feat_log)
+            feat_first = self.fusion(feat_lin, feat_log, raw_input=x)
+            # FiLM: predict noise level and modulate fused features
+            noise_feats = self.fusion.noise_estimator(x)
+            feat_first, noise_level_pred = self.film_conditioner(noise_feats, feat_first)
         else:
             feat_first = feat_lin
             
         feat = feat_first
         
-        # Stage 1 (Extract early shallow edge features)
+        # Stage 1
         for block in self.stage1:
-            if self.training and feat.requires_grad:
+            if self.training and feat.requires_grad and not self.use_repblock:
                 feat = torch.utils.checkpoint.checkpoint(block, feat, use_reentrant=False)
             else:
                 feat = block(feat)
         feat_stage1 = feat
             
-        # Swin 1
-        feat = self.swin1(feat)
+        # Attention 1 (MDTA / Swin)
+        feat = self.attn1(feat)
         
-        # Stage 2 (Extract mid-level periodic features)
+        # Stage 2
         for block in self.stage2:
-            if self.training and feat.requires_grad:
+            if self.training and feat.requires_grad and not self.use_repblock:
                 feat = torch.utils.checkpoint.checkpoint(block, feat, use_reentrant=False)
             else:
                 feat = block(feat)
         feat_stage2 = feat
             
-        # Swin 2
-        feat = self.swin2(feat)
+        # Attention 2 (MDTA / Swin)
+        feat = self.attn2(feat)
         
         # Stage 3
         for block in self.stage3:
-            if self.training and feat.requires_grad:
+            if self.training and feat.requires_grad and not self.use_repblock:
                 feat = torch.utils.checkpoint.checkpoint(block, feat, use_reentrant=False)
             else:
                 feat = block(feat)
@@ -602,7 +881,7 @@ class FullModel(nn.Module):
             + self.gamma2 * self.highway_proj2(feat_stage2)
         )
         
-        # High-frequency residual
+        # High-frequency residual from Decoupled Head
         residual = self.restoration_head(feat_head_in)
         
         # Global base image skip connection: y_hat = Up(x) + Delta_x
@@ -615,13 +894,14 @@ class FullModel(nn.Module):
             
         restored = base_img + residual
         
-        # Built-in normalization & physical bounding constraint:
-        # Ensures model directly outputs valid [0.0, 1.0] float arrays without requiring evaluator post-processing
         if not self.training:
             restored = torch.clamp(restored, 0.0, 1.0)
         
         if return_dict:
-            return {'restored': restored}
+            result = {'restored': restored}
+            if noise_level_pred is not None:
+                result['noise_level_pred'] = noise_level_pred
+            return result
         return restored
     
     def get_intermediate_features(self, x: torch.Tensor) -> dict:
@@ -629,7 +909,7 @@ class FullModel(nn.Module):
         feat_lin = self.conv_first(x)
         if self.use_log_domain:
             feat_log = self.conv_log(self.log_transform(x))
-            feat_first = self.fusion(feat_lin, feat_log)
+            feat_first = self.fusion(feat_lin, feat_log, raw_input=x)
         else:
             feat_first = feat_lin
             
@@ -641,14 +921,14 @@ class FullModel(nn.Module):
         features['after_stage1'] = feat
         feat_stage1 = feat
         
-        feat = self.swin1(feat)
+        feat = self.attn1(feat)
         
         for block in self.stage2:
             feat = block(feat)
         features['after_stage2'] = feat
         feat_stage2 = feat
         
-        feat = self.swin2(feat)
+        feat = self.attn2(feat)
         
         for block in self.stage3:
             feat = block(feat)
@@ -679,28 +959,7 @@ def load_pretrained_rrdb_weights(
     strict: bool = False,
     verbose: bool = True,
 ) -> dict:
-    """Transfer weights from pretrained ESRGAN / Real-ESRGAN (RRDBNet) to SemiRestoreNet.
-    
-    Mapping Strategy:
-        - `conv_first.weight`: shape [64, 3, 3, 3] -> Grayscale average [64, 1, 3, 3]
-        - `conv_first.bias`: shape [64] -> direct transfer
-        - `body.{0..7}` -> `stage1.{0..7}` (8 RRDB blocks)
-        - `body.{8..15}` -> `stage2.{0..7}` (8 RRDB blocks)
-        - `body.{16..22}` -> `stage3.{0..6}` (7 RRDB blocks) [Total 23 RRDBs]
-        - `conv_body.{weight, bias}` -> direct transfer
-    
-    Newly added semiconductor-specific modules (Swin attention, Anisotropic CBAM,
-    Highway projections, Gated Log Fusion, and Task Heads) remain initialized for domain fine-tuning.
-    
-    Args:
-        model: FullModel instance to load weights into.
-        weights_path_or_dict: Path to .pth/.pt file or raw state_dict dictionary.
-        strict: If True, raises error on unmatched keys.
-        verbose: If True, prints transfer summary.
-        
-    Returns:
-        Dict with 'transferred_keys', 'missing_keys', 'unmapped_keys', 'transferred_params'.
-    """
+    """Transfer weights from pretrained ESRGAN / Real-ESRGAN (RRDBNet) to SemiRestoreNet."""
     if isinstance(weights_path_or_dict, (str, Path)):
         weights_path = Path(weights_path_or_dict)
         if not weights_path.exists():
@@ -709,7 +968,6 @@ def load_pretrained_rrdb_weights(
     else:
         raw_dict = weights_path_or_dict
         
-    # Unwrap state dict if nested
     for wrapper_key in ['params_ema', 'params', 'model', 'net_g', 'state_dict']:
         if isinstance(raw_dict, dict) and wrapper_key in raw_dict:
             raw_dict = raw_dict[wrapper_key]
@@ -721,29 +979,24 @@ def load_pretrained_rrdb_weights(
     
     for k, v in raw_dict.items():
         clean_k = k
-        # Strip common prefixes
         for prefix in ['module.', 'net_g.', 'model.']:
             if clean_k.startswith(prefix):
                 clean_k = clean_k[len(prefix):]
                 
         target_k = None
         
-        # 1. First convolution (RGB -> Grayscale adaptation)
         if clean_k == 'conv_first.weight':
             target_k = 'conv_first.weight'
             if v.shape[1] == 3 and model_state[target_k].shape[1] == 1:
-                # Average RGB channels: (W_R + W_G + W_B) / 3
                 v = v.mean(dim=1, keepdim=True)
             elif v.shape != model_state[target_k].shape:
                 continue
         elif clean_k == 'conv_first.bias':
             target_k = 'conv_first.bias'
             
-        # 2. Trunk convolution
         elif clean_k.startswith('conv_body.'):
             target_k = clean_k
             
-        # 3. 23 RRDB blocks mapping to stage1 (8), stage2 (8), stage3 (7)
         elif clean_k.startswith('body.'):
             parts = clean_k.split('.')
             try:
@@ -768,7 +1021,6 @@ def load_pretrained_rrdb_weights(
         else:
             unmapped_keys.append(k)
             
-    # Load into model
     missing_keys, unexpected_keys = model.load_state_dict(transferred_dict, strict=False)
     
     total_transferred_params = sum(p.numel() for p in transferred_dict.values())
@@ -778,7 +1030,7 @@ def load_pretrained_rrdb_weights(
     if verbose:
         print(f"[TransferLearning] Pretrained RRDB weights loaded successfully:")
         print(f"  - Transferred keys: {len(transferred_keys)} tensors ({total_transferred_params:,} parameters, {transfer_pct:.1f}% of model)")
-        print(f"  - Untrained/Domain keys: {len(missing_keys)} (Swin Attention, CBAM, Highway, Heads, Gated Log Fusion)")
+        print(f"  - Untrained/Domain keys: {len(missing_keys)} (MDTA/Swin Attention, Manhattan Attention, Highway, Heads, Gated Log Fusion)")
         print(f"  - Unmapped source keys: {len(unmapped_keys)}")
         
     return {
@@ -796,35 +1048,47 @@ def load_pretrained_rrdb_weights(
 
 def create_teacher_model(
     num_rrdb_blocks: tuple = (8, 8, 7),
+    attention_type: str = 'mdta',
     upscale_factor: int = 1,
     use_log_domain: bool = True,
+    use_repblock: bool = False,
     **kwargs,
 ) -> FullModel:
-    """Create full 23-RRDB Teacher model (16.86M parameters)."""
+    """Create full 23-RRDB Teacher model with Restormer MDTA global attention."""
     return FullModel(
         num_rrdb_blocks=num_rrdb_blocks,
+        attention_type=attention_type,
         upscale_factor=upscale_factor,
         use_log_domain=use_log_domain,
+        use_repblock=use_repblock,
         **kwargs
     )
 
 
-def create_student_model(num_blocks: int = 8, upscale_factor: int = 1, use_log_domain: bool = True, **kwargs) -> FullModel:
-    """Create compact Student model (e.g. 8 blocks: 3+3+2, 6.39M parameters)."""
+def create_student_model(
+    num_blocks: int = 8,
+    attention_type: str = 'mdta',
+    upscale_factor: int = 1,
+    use_log_domain: bool = True,
+    use_repblock: bool = False,
+    **kwargs,
+) -> FullModel:
+    """Create compact Student model with optional structural reparameterization."""
     if num_blocks == 8:
         blocks = (3, 3, 2)
     elif num_blocks == 16:
         blocks = (6, 5, 5)
+    elif num_blocks == 4:
+        blocks = (2, 1, 1)
     else:
         b = num_blocks // 3
-        blocks = (b, b, num_blocks - 2 * b)
+        blocks = (b, b, max(1, num_blocks - 2 * b))
         
     return FullModel(
         num_rrdb_blocks=blocks,
+        attention_type=attention_type,
         upscale_factor=upscale_factor,
         use_log_domain=use_log_domain,
+        use_repblock=use_repblock,
         **kwargs
     )
-# Log transform numerical safety verified
-# Directional Manhattan CBAM strip fusion
-# Gated residual skip scaling

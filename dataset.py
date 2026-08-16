@@ -221,6 +221,7 @@ def apply_real_esrgan_sem_pipeline(image: np.ndarray) -> tuple[np.ndarray, dict]
         'degradations': [],
         'noise_level': 0.0,
         'scale_factor': 1,
+        'charging_applied': False,
     }
     
     # 1. Beam PSF Blur (85% probability)
@@ -269,8 +270,27 @@ def apply_real_esrgan_sem_pipeline(image: np.ndarray) -> tuple[np.ndarray, dict]
         strength = random.uniform(0.03, 0.15)
         degraded = add_charging_drift(degraded, strength=strength)
         metadata['degradations'].append(f'charging_{strength:.2f}')
+        metadata['charging_applied'] = True
     
     return degraded, metadata
+
+
+def apply_second_order_degradation(image: np.ndarray) -> tuple[np.ndarray, dict]:
+    """Apply degradation pipeline twice (Real-ESRGAN-style second-order).
+    
+    Closes the sim-to-real gap by generating more complex, realistic degradation
+    patterns that single-pass pipelines cannot produce.
+    """
+    degraded, meta1 = apply_real_esrgan_sem_pipeline(image)
+    degraded, meta2 = apply_real_esrgan_sem_pipeline(degraded)
+    combined_meta = {
+        'degradation_type': 'real_esrgan_sem_2nd_order',
+        'degradations': meta1['degradations'] + ['||2nd||'] + meta2['degradations'],
+        'noise_level': max(meta1['noise_level'], meta2['noise_level']),
+        'scale_factor': max(meta1['scale_factor'], meta2['scale_factor']),
+        'charging_applied': meta1.get('charging_applied', False) or meta2.get('charging_applied', False),
+    }
+    return degraded, combined_meta
 
 
 # =============================================================================
@@ -279,19 +299,23 @@ def apply_real_esrgan_sem_pipeline(image: np.ndarray) -> tuple[np.ndarray, dict]
 
 DEGRADATION_TYPES = {
     'real_esrgan_sem': {
-        'prob': 0.30,
+        'prob': 0.18,
         'pipeline': ['real_esrgan'],
     },
-    'pure_speckle': {
+    'real_esrgan_sem_2nd_order': {
         'prob': 0.15,
+        'pipeline': ['real_esrgan_2nd'],
+    },
+    'pure_speckle': {
+        'prob': 0.14,
         'pipeline': ['speckle'],
     },
     'pure_gaussian': {
-        'prob': 0.15,
+        'prob': 0.14,
         'pipeline': ['gaussian'],
     },
     'pure_downsample': {
-        'prob': 0.15,
+        'prob': 0.12,
         'pipeline': ['downsample'],
     },
     'speckle_downsample': {
@@ -299,7 +323,7 @@ DEGRADATION_TYPES = {
         'pipeline': ['speckle', 'downsample'],
     },
     'gaussian_downsample': {
-        'prob': 0.08,
+        'prob': 0.10,
         'pipeline': ['gaussian', 'downsample'],
     },
     'all_combined': {
@@ -330,6 +354,8 @@ def apply_degradation_pipeline(
     """
     if deg_type == 'real_esrgan_sem' or deg_type == 'real_esrgan':
         return apply_real_esrgan_sem_pipeline(image)
+    if deg_type == 'real_esrgan_sem_2nd_order' or deg_type == 'real_esrgan_2nd':
+        return apply_second_order_degradation(image)
         
     pipeline = DEGRADATION_TYPES[deg_type]['pipeline']
     degraded = image.copy()
@@ -338,6 +364,7 @@ def apply_degradation_pipeline(
         'degradations': [],
         'noise_level': 0.0,
         'scale_factor': 1,
+        'charging_applied': False,
     }
     
     for step in pipeline:
@@ -393,6 +420,7 @@ class DomainRandomizationDataset(Dataset):
         mode: str = 'train',
         paired: bool = False,
         upscale_factor: int = 1,
+        val_split: float = 0.15,
     ):
         super().__init__()
         self.data_dir = Path(data_dir)
@@ -400,6 +428,7 @@ class DomainRandomizationDataset(Dataset):
         self.mode = mode
         self.paired = paired
         self.upscale_factor = upscale_factor
+        self.val_split = val_split
         
         # Find images
         if paired:
@@ -427,8 +456,18 @@ class DomainRandomizationDataset(Dataset):
                 f"Supported formats: {', '.join(sorted(SUPPORTED_EXTS))}"
             )
         
+        # Deterministic train/val split (held-out validation)
+        if val_split > 0.0 and not paired:
+            rng = np.random.RandomState(42)
+            indices = rng.permutation(len(self.image_names)).tolist()
+            split_idx = int(len(self.image_names) * (1.0 - val_split))
+            if mode == 'train':
+                self.image_names = [self.image_names[i] for i in indices[:split_idx]]
+            else:
+                self.image_names = [self.image_names[i] for i in indices[split_idx:]]
+        
         print(f"[Dataset] Found {len(self.image_names)} images in {self.clean_dir} "
-              f"(mode={mode}, paired={paired})")
+              f"(mode={mode}, paired={paired}, split={'held-out ' + str(val_split) if val_split > 0 else 'none'})")
     
     def _list_images(self, directory: Path) -> list[str]:
         """List image files in directory."""
@@ -573,8 +612,9 @@ class DomainRandomizationDataset(Dataset):
             'degraded': degraded_tensor,
             'clean': clean_tensor,
             'degradation_type': metadata.get('degradation_type', 'unknown'),
-            'noise_level': metadata.get('noise_level', 0.0),
+            'noise_level': float(metadata.get('noise_level', 0.0)),
             'scale_factor': metadata.get('scale_factor', 1),
+            'charging_applied': metadata.get('charging_applied', False),
             'filename': name,
         }
 

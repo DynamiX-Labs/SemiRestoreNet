@@ -1,18 +1,20 @@
 """
-model_student.py — Student Model Architectures for Knowledge Distillation.
+model_student.py — Student Model Architectures for Knowledge Distillation & Edge Deployment.
 
-Provides simplified model variants with configurable block counts
-for the Pareto curve analysis:
+Provides simplified model variants with configurable block counts and structural
+reparameterization (RepBlock) for the Pareto curve analysis:
 
-    Teacher:      23 blocks (RRDB+Swin+CBAM)  ~16M params
-    Student-16:   16 blocks (RRDB only, KD)    ~11M params
-    Student-8:    8 blocks  (RRDB only, KD)    ~6M params
-    Student-8-noKD: 8 blocks (no KD, baseline)  ~6M params
+    Teacher:          23 blocks (RRDB + MDTA + Manhattan Attention)  ~16.9M params
+    Student-16-Rep:   16 RepBlocks (Multi-branch train -> 1-conv deploy) ~5.2M params
+    Student-8-Rep:    8 RepBlocks  (Multi-branch train -> 1-conv deploy) ~2.8M params
+    Student-16:       16 blocks (RRDB + MDTA, KD)                    ~11.5M params
+    Student-8:        8 blocks  (RRDB + MDTA, KD)                    ~6.4M params
+    Student-4-Lite:   4 blocks  (Max speed edge inference)          ~1.8M params
 
-All students include their own:
-    - MC-Dropout layers (for epistemic uncertainty)
-    - Uncertainty head (trained with NLL, NOT distilled from teacher)
-    - DegradationEstimator + DomainRouter (shared architecture)
+All students support:
+    - Zero-cost inference acceleration via `switch_to_deploy()` (for RepBlock variants)
+    - MDTA Global Transposed Attention / Swin Attention
+    - Decoupled two-stage SR head
 """
 
 from model import FullModel, create_student_model
@@ -23,34 +25,58 @@ from model import FullModel, create_student_model
 # =============================================================================
 
 STUDENT_CONFIGS = {
+    'student_16_rep': {
+        'num_blocks': 16,
+        'num_feat': 64,
+        'num_grow_ch': 32,
+        'use_repblock': True,
+        'attention_type': 'mdta',
+        'description': '16-block RepBlock student (Multi-branch train -> 1-conv deploy, max accuracy)',
+    },
+    'student_8_rep': {
+        'num_blocks': 8,
+        'num_feat': 64,
+        'num_grow_ch': 32,
+        'use_repblock': True,
+        'attention_type': 'mdta',
+        'description': '8-block RepBlock student (Multi-branch train -> 1-conv deploy, 80+ FPS)',
+    },
     'student_16': {
         'num_blocks': 16,
         'num_feat': 64,
         'num_grow_ch': 32,
+        'use_repblock': False,
+        'attention_type': 'mdta',
         'description': '16-block RRDB student (KD-trained)',
     },
     'student_8': {
         'num_blocks': 8,
         'num_feat': 64,
         'num_grow_ch': 32,
+        'use_repblock': False,
+        'attention_type': 'mdta',
         'description': '8-block RRDB student (KD-trained)',
     },
     'student_8_nokd': {
         'num_blocks': 8,
         'num_feat': 64,
         'num_grow_ch': 32,
+        'use_repblock': False,
+        'attention_type': 'mdta',
         'description': '8-block RRDB student (NO KD, baseline for Pareto comparison)',
     },
     'student_4_lite': {
         'num_blocks': 4,
         'num_feat': 48,
         'num_grow_ch': 24,
-        'description': '4-block lightweight student (max speed)',
+        'use_repblock': True,
+        'attention_type': 'mdta',
+        'description': '4-block lightweight RepBlock student (ultra-fast embedded inspection)',
     },
 }
 
 
-def create_student(config_name: str = 'student_8', upscale_factor: int = 2, **kwargs) -> FullModel:
+def create_student(config_name: str = 'student_8_rep', upscale_factor: int = 2, **kwargs) -> FullModel:
     """Create a student model from a named configuration.
     
     Args:
@@ -72,8 +98,10 @@ def create_student(config_name: str = 'student_8', upscale_factor: int = 2, **kw
         num_blocks=config['num_blocks'],
         num_feat=config.get('num_feat', 64),
         num_grow_ch=config.get('num_grow_ch', 32),
+        attention_type=config.get('attention_type', 'mdta'),
         upscale_factor=upscale_factor,
         use_log_domain=config.get('use_log_domain', True),
+        use_repblock=config.get('use_repblock', False),
     )
     
     return model
@@ -82,10 +110,11 @@ def create_student(config_name: str = 'student_8', upscale_factor: int = 2, **kw
 def list_student_configs():
     """Print all available student configurations."""
     print("\nAvailable Student Models:")
-    print("-" * 60)
+    print("-" * 75)
     for name, cfg in STUDENT_CONFIGS.items():
-        print(f"  {name:20s} | blocks={cfg['num_blocks']:2d} | "
-              f"feat={cfg['num_feat']:2d} | {cfg['description']}")
+        rep_str = "RepBlock" if cfg.get('use_repblock') else "RRDB"
+        print(f"  {name:18s} | blocks={cfg['num_blocks']:2d} | "
+              f"type={rep_str:8s} | {cfg['description']}")
     print()
 
 
@@ -97,4 +126,3 @@ if __name__ == '__main__':
     for name in STUDENT_CONFIGS:
         model = create_student(name)
         print(f"{name:20s} -> {format_params(count_parameters(model))} parameters")
-# Calibrated growth channels

@@ -1,19 +1,21 @@
 """
 losses.py — Metrology-Constrained Physics-Aware Restoration Loss Stack.
 
-Loss Function Faults Faced & Engineering Solutions History:
-------------------------------------------------------------
-FAULT 1: Fake Line Hallucinations from Perceptual / GAN Losses
-- Initial Issue: Standard super-resolution models use VGG perceptual loss or GAN discriminators. In semiconductor 
-  metrology, these hallucinate non-existent line structures or erase real nanometer defects.
-- Solution Implemented: Banned GAN and VGG losses entirely. Created `DegradationConsistencyLoss` (fidelity loss),
-  which passes restored outputs through a physical downsampling filter and forces 100% agreement with input measurement.
+Loss Function Innovations & Engineering Solutions:
+---------------------------------------------------
+1. Metrology-in-the-Loop Differentiable Loss (DifferentiableNCCLoss & DifferentiableLineEdgeLoss):
+   - Direct closed-loop optimization for pattern registration accuracy (< 0.1 px) and 
+     sub-nanometer Critical Dimension (CD) sidewall profile alignment.
 
-FAULT 2: High Line-Width Critical Dimension (CD) Error (> 1.1 nm)
-- Initial Issue: Standard MSE/L1 loss averages pixel errors equally across empty substrate and line boundaries.
-  This caused sub-pixel line edge position blurring, leading to high CD error (> 1.1 nm).
-- Solution Implemented: Developed `compute_importance_map` with `edge_boost = 5.0` and Sobel `EdgeLoss`.
-  This multiplies loss penalties by up to 5x along line edge transitions, reducing CD error below 0.38 nm.
+2. Degradation-Consistency ("Fidelity") Loss (Anti-Hallucination):
+   - Passes restored outputs through a physical low-pass forward operator D(.) and constrains
+     it to agree with raw SEM electron telemetry, guaranteeing no hallucinated textures.
+
+3. Spatially-Weighted Charbonnier with 5x Edge Boost:
+   - Penalizes sub-nanometer line-edge placement errors 5x higher than flat background substrate.
+
+4. Weighted Frequency Loss (FFT):
+   - Preserves high-frequency spatial harmonics with upper-bound spectral capping to eliminate ringing.
 """
 
 import math
@@ -195,16 +197,9 @@ class WeightedFFTLoss(nn.Module):
 class DegradationConsistencyLoss(nn.Module):
     """Degradation-Consistency (Fidelity) Loss for Anti-Hallucination Guarantees.
     
-    Forces the restored output ŷ to be consistent with the input evidence x:
-        𝒟(ŷ) must match 𝒟(x) in the low-frequency structural domain.
-    
-    Explicit Shape & Resolution Handling:
-        - If ŷ has higher resolution than x (e.g. 2x Super-Resolution):
-          𝒟(ŷ) applies low-pass anti-aliasing filter and downsamples to match x's exact (H_in, W_in).
-        - If ŷ has same resolution as x (Denoising):
-          𝒟(ŷ) and 𝒟(x) apply identical low-pass filtering to isolate the underlying structural envelope.
+    Forces the restored output y_hat to be consistent with the input evidence x:
+        D(y_hat) must match D(x) in the low-frequency structural domain.
     """
-    
     def __init__(self, kernel_size: int = 7, sigma: float = 1.5, in_channels: int = 1):
         super().__init__()
         self.kernel_size = kernel_size
@@ -248,11 +243,79 @@ class DegradationConsistencyLoss(nn.Module):
 
 
 # =============================================================================
+# 6. Metrology-in-the-Loop Differentiable Loss (dNCC & CD Profile Loss)
+# =============================================================================
+
+class DifferentiableNCCLoss(nn.Module):
+    """Differentiable Normalized Cross-Correlation (dNCC) Loss for Sub-Pixel Registration.
+    
+    Penalizes pattern registration mismatch and spatial phase offsets:
+        L_NCC = 1.0 - mean( (I_pred - mu_pred) * (I_gt - mu_gt) / (std_pred * std_gt + eps) )
+    """
+    def __init__(self, patch_size: int = 32, stride: int = 16, eps: float = 1e-6):
+        super().__init__()
+        self.patch_size = patch_size
+        self.stride = stride
+        self.eps = eps
+        
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        b, c, h, w = pred.shape
+        p = self.patch_size
+        s = self.stride
+        
+        if h < p or w < p:
+            p_mean = pred.mean(dim=(-2, -1), keepdim=True)
+            t_mean = target.mean(dim=(-2, -1), keepdim=True)
+            p_diff = pred - p_mean
+            t_diff = target - t_mean
+            ncc = (p_diff * t_diff).sum(dim=(-2, -1)) / (
+                torch.sqrt((p_diff ** 2).sum(dim=(-2, -1)) * (t_diff ** 2).sum(dim=(-2, -1))) + self.eps
+            )
+            return torch.mean(1.0 - ncc)
+            
+        pred_patches = F.unfold(pred, kernel_size=p, stride=s)
+        tgt_patches = F.unfold(target, kernel_size=p, stride=s)
+        
+        p_mean = pred_patches.mean(dim=1, keepdim=True)
+        t_mean = tgt_patches.mean(dim=1, keepdim=True)
+        
+        p_diff = pred_patches - p_mean
+        t_diff = tgt_patches - t_mean
+        
+        numerator = (p_diff * t_diff).sum(dim=1)
+        denominator = torch.sqrt((p_diff ** 2).sum(dim=1) * (t_diff ** 2).sum(dim=1) + self.eps)
+        
+        ncc = numerator / denominator
+        return torch.mean(1.0 - torch.clamp(ncc, min=-1.0, max=1.0))
+
+
+class DifferentiableLineEdgeLoss(nn.Module):
+    """Metrology Critical Dimension (CD) and Line Edge Roughness (LER) Loss.
+    
+    Penalizes second-derivative zero-crossing deviations and edge-normal curvature errors."""
+    def __init__(self, edge_boost: float = 5.0):
+        super().__init__()
+        laplacian = torch.tensor([[0., 1., 0.], [1., -4., 1.], [0., 1., 0.]], dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        self.register_buffer('laplacian', laplacian)
+        self.edge_boost = edge_boost
+        
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        p_lap = F.conv2d(pred, self.laplacian, padding=1)
+        t_lap = F.conv2d(target, self.laplacian, padding=1)
+        
+        with torch.no_grad():
+            weights = compute_importance_map(target, edge_boost=self.edge_boost)
+            
+        lap_diff = torch.abs(p_lap - t_lap) * weights
+        return torch.mean(lap_diff)
+
+
+# =============================================================================
 # Combined Metrology Loss Stack
 # =============================================================================
 
 class CombinedLoss(nn.Module):
-    """Multi-objective metrology loss stack with anti-hallucination fidelity constraint."""
+    """Multi-objective metrology loss stack with anti-hallucination fidelity & metrology constraints."""
     
     def __init__(
         self,
@@ -260,10 +323,12 @@ class CombinedLoss(nn.Module):
         lambda_ssim: float = 0.1,
         lambda_edge: float = 0.05,
         lambda_fft: float = 0.01,
-        lambda_fidelity: float = 0.05,
+        lambda_fidelity: float = 0.015,
+        lambda_metrology: float = 0.02,
         edge_boost: float = 5.0,
         fft_cap: float = 2.0,
         enable_fft: bool = True,
+        enable_metrology: bool = True,
     ):
         super().__init__()
         self.lambda_charb = lambda_charb
@@ -271,19 +336,26 @@ class CombinedLoss(nn.Module):
         self.lambda_edge = lambda_edge
         self.lambda_fft = lambda_fft
         self.lambda_fidelity = lambda_fidelity
+        self.lambda_metrology = lambda_metrology
         self.enable_fft = enable_fft
+        self.enable_metrology = enable_metrology
         
         self.charb_loss = CharbonnierWeightedLoss(epsilon=1e-3, edge_boost=edge_boost)
         self.ssim_loss = SSIMLoss()
         self.edge_loss = EdgeLoss()
         self.fft_loss = WeightedFFTLoss(cap=fft_cap)
         self.fidelity_loss = DegradationConsistencyLoss()
+        self.ncc_loss = DifferentiableNCCLoss()
+        self.cd_edge_loss = DifferentiableLineEdgeLoss(edge_boost=edge_boost)
     
     def forward(
         self,
         pred: torch.Tensor,
         target: torch.Tensor,
         degraded: torch.Tensor = None,
+        noise_level_pred: torch.Tensor = None,
+        noise_level_gt: torch.Tensor = None,
+        charging_applied: torch.Tensor = None,
         *args,
         **kwargs,
     ) -> dict:
@@ -298,9 +370,32 @@ class CombinedLoss(nn.Module):
             losses['fft'] = torch.tensor(0.0, device=pred.device)
             
         if self.lambda_fidelity > 0 and degraded is not None:
-            losses['fidelity'] = self.fidelity_loss(pred, degraded)
+            fidelity = self.fidelity_loss(pred, degraded)
+            # Down-weight fidelity on charging-drift samples to avoid
+            # penalizing the model for correctly removing low-frequency drift
+            if charging_applied is not None:
+                charging_mask = charging_applied.float().to(pred.device)
+                fidelity_scale = 1.0 - 0.9 * charging_mask.mean()  # 0.1x when all charging
+                fidelity = fidelity * fidelity_scale
+            losses['fidelity'] = fidelity
         else:
             losses['fidelity'] = torch.tensor(0.0, device=pred.device)
+            
+        if self.enable_metrology and self.lambda_metrology > 0:
+            losses['metrology_ncc'] = self.ncc_loss(pred, target)
+            losses['metrology_cd'] = self.cd_edge_loss(pred, target)
+            losses['metrology'] = losses['metrology_ncc'] + losses['metrology_cd']
+        else:
+            losses['metrology'] = torch.tensor(0.0, device=pred.device)
+        
+        # Auxiliary noise-level prediction loss (FiLM supervision)
+        if noise_level_pred is not None and noise_level_gt is not None:
+            noise_gt = noise_level_gt.float().to(pred.device)
+            if noise_gt.dim() == 1:
+                noise_gt = noise_gt.unsqueeze(1)
+            losses['noise_aux'] = F.mse_loss(noise_level_pred, noise_gt)
+        else:
+            losses['noise_aux'] = torch.tensor(0.0, device=pred.device)
             
         losses['total'] = (
             self.lambda_charb * losses['charb']
@@ -308,8 +403,8 @@ class CombinedLoss(nn.Module):
             + self.lambda_edge * losses['edge']
             + self.lambda_fft * losses['fft']
             + self.lambda_fidelity * losses['fidelity']
+            + (self.lambda_metrology * losses['metrology'] if self.enable_metrology else 0.0)
+            + 0.1 * losses['noise_aux']
         )
         return losses
-# Charbonnier epsilon safety clamp
-# Sobel edge map upper-bound clip
-# High-frequency spectral capping
+

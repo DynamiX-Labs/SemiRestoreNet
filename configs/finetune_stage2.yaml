@@ -28,12 +28,12 @@ learning_rate: 2.0e-5                  # Fine-tuning learning rate
 lr_backbone_scale: 0.1                 # 0.1x LR for pretrained backbone (2.0e-6)
 min_lr: 1.0e-7
 weight_decay: 1.0e-4
-warmup_epochs: 1                       # 1-epoch quick warmup
-total_epochs: 10                       # 10 fast fine-tuning epochs
+warmup_epochs: 2                       # 2-epoch warmup for stable fine-tuning
+total_epochs: 25                       # 25 epochs for full architecture convergence
 patch_size: 128                        # 128x128 crop training (fast 1.1 it/s execution, zero VRAM swapping)
 batch_size: 2                          # 2 patches per batch
 accumulation_steps: 8                  # 8x accumulation = Effective Batch Size 16
-max_val_samples: 100                   # Fast 100-sample validation (reduces epoch time by 65%!)
+max_val_samples: 300                   # 300-sample validation (reduces checkpoint selection noise)
 num_workers: 0                         # Main thread loading (optimal on Windows)
 use_amp: true                          # Automatic Mixed Precision for 2x GPU speed
 # Metrology fine-tuning hyperparams

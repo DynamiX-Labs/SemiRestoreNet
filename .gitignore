@@ -8,6 +8,8 @@ __pycache__/
 # Virtual Environments
 venv/
 venv_gpu/
+venv_cuda/
+venv*/
 env/
 ENV/
 .venv/
