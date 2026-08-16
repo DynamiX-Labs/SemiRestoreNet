@@ -128,7 +128,7 @@ def run_finetuning(
     batch_size: int = 2,
     accumulation_steps: int = 8,
     lr: float = 8e-5,
-    resume_checkpoint: str = "checkpoints/best_model.pth",
+    resume_checkpoint: str = "checkpoints/best_finetuned_model.pth",
     pretrained_esrgan: str = "checkpoints/RealESRGAN_x4plus.pth",
     save_dir: str = "checkpoints",
     max_train_steps: int = None,
@@ -166,7 +166,7 @@ def run_finetuning(
         print(f"[Init] Transferring pretrained Real-ESRGAN weights from {pretrained_esrgan}...")
         load_pretrained_rrdb_weights(model, pretrained_esrgan, verbose=True)
         
-    ema = ModelEMA(model, decay=0.9995)
+    ema = ModelEMA(model, decay=0.999)  # Faster adaptation (was 0.9995)
     
     # 3. Setup Dataset
     train_dir = './train/train/GT' if Path('./train/train/GT').is_dir() else './data/sample_dataset/search'
@@ -206,8 +206,8 @@ def run_finetuning(
         lambda_ssim=0.15,
         lambda_edge=0.08,
         lambda_fft=0.01,
-        lambda_fidelity=0.010,
-        lambda_metrology=0.025,
+        lambda_fidelity=0.001,    # 10x reduced — was fighting denoising at 0.010
+        lambda_metrology=0.005,   # 5x reduced — CD loss was overwhelming Charbonnier at 0.025
         edge_boost=5.0,
     ).to(device)
     
@@ -224,7 +224,7 @@ def run_finetuning(
             
     optimizer = torch.optim.AdamW([
         {'params': backbone_params, 'lr': lr * 0.1, 'name': 'pretrained_trunk'},
-        {'params': head_attn_params, 'lr': lr, 'name': 'mdta_and_heads'},
+        {'params': head_attn_params, 'lr': lr * 2.5, 'name': 'mdta_and_heads'},  # 2.5x LR for new modules
     ], weight_decay=1e-4)
     
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-7)
@@ -365,7 +365,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=2, help='Batch size per iteration')
     parser.add_argument('--accumulation_steps', type=int, default=8, help='Gradient accumulation steps')
     parser.add_argument('--lr', type=float, default=8e-5, help='Learning rate')
-    parser.add_argument('--resume', type=str, default='checkpoints/best_model.pth', help='Resume checkpoint path')
+    parser.add_argument('--resume', type=str, default='checkpoints/best_finetuned_model.pth', help='Resume checkpoint path')
     parser.add_argument('--max_train_steps', type=int, default=None, help='Max train steps per epoch for fast turnaround')
     parser.add_argument('--max_val_samples', type=int, default=30, help='Max validation samples')
     args = parser.parse_args()

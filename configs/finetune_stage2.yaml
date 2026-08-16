@@ -17,14 +17,14 @@ lambda_charb: 1.0                      # Primary: Spatially-weighted Charbonnier
 lambda_ssim: 0.15                      # Boosted: Structural similarity for SSIM > 0.88
 lambda_edge: 0.08                      # Boosted: Sobel gradient sharpness (CD line protection)
 lambda_fft: 0.01                       # Supporting: Frequency power spectrum matching
-lambda_fidelity: 0.02                  # Relaxed anti-hallucination constraint for fine-detail recovery
+lambda_fidelity: 0.001                 # 10x reduced — was fighting denoising at higher values
 edge_boost: 5.0                        # 5x pixel loss weight on defect / edge boundaries (CD protection)
 fft_cap: 2.0                           # Capping maximum frequency weighting (anti-ringing)
 enable_fft: true
 
 # --- Optimization & Fast Runtime Acceleration ---
-resume_checkpoint: "./checkpoints/best_model.pth"  # Resume from Stage 1 25.2 dB checkpoint
-learning_rate: 2.0e-5                  # Fine-tuning learning rate
+resume_checkpoint: "./checkpoints/best_finetuned_model.pth"  # Resume from Stage 2 best checkpoint
+learning_rate: 8.0e-5                  # Base LR (head/attention gets 2.5x = 2e-4)
 lr_backbone_scale: 0.1                 # 0.1x LR for pretrained backbone (2.0e-6)
 min_lr: 1.0e-7
 weight_decay: 1.0e-4

@@ -46,6 +46,7 @@ def add_speckle_noise(image: np.ndarray, num_looks: float = None) -> np.ndarray:
     """
     if num_looks is None:
         num_looks = random.uniform(3.0, 12.0)
+    num_looks = max(num_looks, 3.0)  # Floor at L=3.0 — L<3 is irrecoverable
     
     # Gamma noise with shape=L, scale=1/L -> mean=1, var=1/L
     noise = np.random.gamma(shape=num_looks, scale=1.0 / num_looks, size=image.shape).astype(np.float32)
@@ -64,6 +65,7 @@ def add_gaussian_noise(image: np.ndarray, sigma: float = None) -> np.ndarray:
     """
     if sigma is None:
         sigma = random.uniform(5.0 / 255.0, 40.0 / 255.0)
+    sigma = min(sigma, 40.0 / 255.0)  # Cap at 40/255 — beyond this is irrecoverable
     
     noise = np.random.normal(0, sigma, size=image.shape).astype(np.float32)
     return (image + noise).astype(np.float32)
@@ -234,7 +236,7 @@ def apply_real_esrgan_sem_pipeline(image: np.ndarray) -> tuple[np.ndarray, dict]
     
     # 2. Downsampling (70% probability)
     if random.random() < 0.70:
-        scale = random.choice([2, 4])
+        scale = 2  # Fixed 2× only — 4× creates irrecoverable 8× total loss with 2× SR
         interp = random.choice(['bicubic', 'bilinear', 'area', 'lanczos'])
         degraded = downsample_image(degraded, scale_factor=scale, interp_mode=interp)
         metadata['degradations'].append(f'downsample_x{scale}_{interp}')
@@ -303,7 +305,7 @@ DEGRADATION_TYPES = {
         'pipeline': ['real_esrgan'],
     },
     'real_esrgan_sem_2nd_order': {
-        'prob': 0.15,
+        'prob': 0.05,
         'pipeline': ['real_esrgan_2nd'],
     },
     'pure_speckle': {
@@ -375,13 +377,13 @@ def apply_degradation_pipeline(
             metadata['noise_level'] = max(metadata['noise_level'], 1.0 / math.sqrt(num_looks))
             
         elif step == 'gaussian':
-            sigma = random.uniform(5.0 / 255.0, 75.0 / 255.0)
+            sigma = random.uniform(5.0 / 255.0, 40.0 / 255.0)
             degraded = add_gaussian_noise(degraded, sigma=sigma)
             metadata['degradations'].append(f'gaussian_s{sigma:.4f}')
             metadata['noise_level'] = max(metadata['noise_level'], sigma)
             
         elif step == 'downsample':
-            scale = random.choice([2, 4])
+            scale = 2  # Fixed 2× — no 4× to avoid irrecoverable information loss
             interp = random.choice(['bicubic', 'bilinear', 'area', 'lanczos'])
             degraded = downsample_image(degraded, scale_factor=scale, interp_mode=interp)
             metadata['degradations'].append(f'downsample_x{scale}_{interp}')

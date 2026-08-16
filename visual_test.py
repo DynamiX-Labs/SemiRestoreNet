@@ -14,7 +14,7 @@ def main():
     print(f"Device: {device}")
     
     # Check checkpoint for upscale factor
-    ckpt_path = 'checkpoints/best_model.pth'
+    ckpt_path = 'checkpoints/ensemble_model.pth' if os.path.isfile('checkpoints/ensemble_model.pth') else 'checkpoints/best_finetuned_model.pth'
     upscale_factor = 2
     if os.path.isfile(ckpt_path):
         ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=False)
@@ -33,10 +33,7 @@ def main():
     model.eval()
     
     # Pick 4 sample GT images
-    gt_dir = Path('data/sample_dataset/reference')
-    if not gt_dir.exists():
-        gt_dir = Path('data/sample_dataset/search')
-    
+    gt_dir = Path('train/train/GT') if Path('train/train/GT').exists() else Path('data/sample_dataset/reference')
     gt_files = sorted(gt_dir.glob('*.png'))[:4]
     if not gt_files:
         gt_files = sorted(gt_dir.glob('*.npy'))[:4]

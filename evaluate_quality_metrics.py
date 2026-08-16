@@ -171,4 +171,16 @@ def run_quality_metrics_benchmark(
 
 
 if __name__ == '__main__':
-    run_quality_metrics_benchmark()
+    import argparse
+    parser = argparse.ArgumentParser(description='Evaluate Quality Metrics (PSNR, SSIM, LPIPS, CD)')
+    parser.add_argument('--checkpoint', type=str, default='checkpoints/ensemble_model.pth', help='Path to checkpoint')
+    parser.add_argument('--num_samples', type=int, default=50, help='Number of test samples')
+    parser.add_argument('--save_plot', type=str, default='evaluation_results/hackathon_quality_metrics.png', help='Save plot path')
+    args = parser.parse_args()
+    
+    run_quality_metrics_benchmark(
+        num_samples=args.num_samples,
+        checkpoint_path=args.checkpoint,
+        save_plot_path=args.save_plot,
+    )
+
