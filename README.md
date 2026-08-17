@@ -215,10 +215,11 @@ Representative test sample (Speckle + 2x SR): **32.23 dB PSNR**, **0.9368 SSIM**
 
 ```text
 SemiRestoreNet/
+├── run.py                       # Official One-Command Submission Benchmark Script (python run.py <in> <out>)
 ├── model.py                     # SemiRestoreNet-v3 (23 RRDBs + MDTA + 2D FFT + U-Pyramid)
 ├── losses.py                    # Metrology Loss Stack (OHEM Charbonnier, SSIM, dNCC, CD Loss)
 ├── dataset.py                   # Second-Order Physics Degradation Pipeline
-├── evaluate.py                  # Standalone Submission-Compliant Evaluation Script
+├── evaluate.py                  # Standalone Submission Evaluation Script
 ├── evaluate_quality_metrics.py  # 5-Task Benchmark Evaluator (PSNR, SSIM, LPIPS, CD Error)
 ├── train_finetune_high_psnr.py  # 30-Epoch Training Script with Layer-Wise Learning Rates
 ├── export_onnx.py               # ONNX Runtime Exporter and Latency Benchmark
@@ -227,7 +228,7 @@ SemiRestoreNet/
 ├── checkpoints/
 │   └── ensemble_model.pth       # Final Submission Checkpoint (69.98 MB)
 ├── submission_restored_outputs/ # 400 Restored Test Benchmark Outputs
-├── docs/images/                 # Scorecard Plots and Visual Comparisons
+├── docs/images/                 # Metrology Figures and Visual Comparisons
 └── README.md                    # Technical Documentation
 ```
 
@@ -235,22 +236,22 @@ SemiRestoreNet/
 
 ## 10. Evaluation Script — MOST IMPORTANT
 
-`evaluate.py` is the standalone inference script designed for automated execution by benchmarking teams:
+`run.py` (and `evaluate.py`) are standalone inference scripts designed for immediate, zero-edit execution by benchmarking teams:
 
-- Accepts `--input_dir` and `--output_dir` (or standard positional arguments).
-- Automatically loads the final model checkpoint (`checkpoints/ensemble_model.pth`).
-- Automatically handles `.npy` float arrays and standard image formats (`.png`, `.jpg`, `.tif`).
-- Supports high-precision 8-Fold Geometric TTA via `--use_tta`.
-- Executes without requiring manual code edits.
+- **Exact Positional Invocation**: `python run.py <input-dir> <output-dir>`
+- **Automatic Checkpoint Resolution**: Dynamically resolves and loads `checkpoints/ensemble_model.pth`.
+- **Zero Configuration**: Automatically creates `<output-dir>` if missing and processes all `.npy` and image files.
+- **Strict Metrology Guarantees**: Restores outputs to exact $2\times$ resolution ($2H \times 2W$), sanitized in $[0.0, 1.0]$ with zero NaN / Inf values.
+- **Offline GPU Execution**: 100% offline, zero internet requirements, zero API keys.
 
 ---
 
 ## 11. Model Weights
 
 The final trained model weights are saved at:
-- **`checkpoints/ensemble_model.pth`** (Size: **69.98 MB** — Best + EMA Model-Soup).
+- **`checkpoints/ensemble_model.pth`** (Size: **69.98 MB** — Best + EMA Model-Soup Ensemble).
 
-This file is tracked directly in the repository and loaded automatically by `evaluate.py`.
+This file is tracked directly in the repository and loaded automatically by `run.py` and `evaluate.py`.
 
 ---
 
@@ -269,14 +270,14 @@ pip install -r requirements.txt
 
 ## 13. One-Command Inference
 
-Run batch inference on any input directory with a single command:
+Run batch restoration on any input directory with the official benchmark command:
 
 ```bash
-# Standard single-pass inference (80 FPS)
-python evaluate.py --input_dir <path_to_test_images> --output_dir <path_to_output_dir>
+# Official submission benchmark execution (Positional arguments)
+python run.py <path_to_input_dir> <path_to_output_dir>
 
-# High-precision 8-Fold Geometric TTA inference (Maximum PSNR & Lowest CD Error)
-python evaluate.py --input_dir <path_to_test_images> --output_dir <path_to_output_dir> --use_tta
+# Optional flag format
+python run.py --input_dir <path_to_input_dir> --output_dir <path_to_output_dir>
 ```
 
 ---
