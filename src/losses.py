@@ -1,21 +1,31 @@
 """
 losses.py — Metrology-Constrained Physics-Aware Restoration Loss Stack.
 
-Loss Function Innovations & Engineering Solutions:
+Implementation Notes:
 ---------------------------------------------------
-1. Metrology-in-the-Loop Differentiable Loss (DifferentiableNCCLoss & DifferentiableLineEdgeLoss):
-   - Direct closed-loop optimization for pattern registration accuracy (< 0.1 px) and 
-     sub-nanometer Critical Dimension (CD) sidewall profile alignment.
+Standard L1 or MSE loss is insufficient for semiconductor metrology, where a 0.5 nm hallucination 
+can ruin wafer yield prediction. This file contains a custom physics-aware loss stack:
 
-2. Degradation-Consistency ("Fidelity") Loss (Anti-Hallucination):
-   - Passes restored outputs through a physical low-pass forward operator D(.) and constrains
-     it to agree with raw SEM electron telemetry, guaranteeing no hallucinated textures.
+1. Charbonnier + Edge Boost + OHEM: 
+   Charbonnier provides smooth, differentiable optimization compared to L1/L2. We apply a 5x boost 
+   on image gradients because transistor sidewall accuracy is more critical than flat substrates. 
+   OHEM focuses the optimizer on the hardest 30% of pixels to prevent ignoring rare defects.
 
-3. Spatially-Weighted Charbonnier with 5x Edge Boost:
-   - Penalizes sub-nanometer line-edge placement errors 5x higher than flat background substrate.
+2. Log-Domain Charbonnier Loss: 
+   SEM electron speckle noise is multiplicative (variance scales with intensity). The signed-log 
+   domain equalizes this variance so the network restores dark trenches as accurately as bright peaks.
 
-4. Weighted Frequency Loss (FFT):
-   - Preserves high-frequency spatial harmonics with upper-bound spectral capping to eliminate ringing.
+3. Degradation-Consistency ("Fidelity") Loss: 
+   To guarantee anti-hallucination, we apply a physical low-pass forward operator D(.) to both the 
+   raw input and the network output. Matching these ensures we don't alter the fundamental low-frequency truth.
+
+4. Weighted Frequency Loss (FFT): 
+   Memory arrays are highly periodic, and spatial losses can blur them. The capped 2D FFT loss forces 
+   the network to lock onto fundamental harmonics without creating ringing around isolated defects.
+
+5. Metrology-in-the-Loop (dNCC & Line Edge Loss): 
+   Normalized Cross-Correlation (NCC) is invariant to illumination shifts, allowing robust sub-pixel 
+   registration. Laplacian second-order derivatives explicitly capture Line Edge Roughness (LER).
 """
 
 import math

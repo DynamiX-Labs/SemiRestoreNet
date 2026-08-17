@@ -1,18 +1,16 @@
 """
 train.py — Main training pipeline for SemiRestoreNet.
 
-Training Stability & Memory Faults Faced & Engineering Solutions History:
+Implementation Notes:
 --------------------------------------------------------------------------
-FAULT 1: OSError [WinError 1455] Paging File Too Small / CUDA OOM
-- Initial Issue: Large batch sizes and unconstrained PyTorch CUDA memory allocator caused Windows pagefile exhaustion 
-  and CUDA Out-Of-Memory crashes on 4GB GPUs.
-- Solution Implemented: Set `os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'`, set batch_size = 2,
-  and used 8-step gradient accumulation (effective batch size = 16) for zero-OOM memory stability.
+1. Memory Stability (OOM Prevention):
+   Large batch sizes and unconstrained CUDA memory allocators can cause Windows pagefile exhaustion 
+   and CUDA OOM crashes on 4GB GPUs. We set `PYTORCH_CUDA_ALLOC_CONF = 'expandable_segments:True'`, 
+   use a small batch size (e.g., 2), and apply 8-step gradient accumulation for stability.
 
-FAULT 2: Destruction of Pretrained Weights During Early Epochs
-- Initial Issue: Applying a high learning rate (2e-4) equally to the backbone and head destroyed pretrained Real-ESRGAN weights.
-- Solution Implemented: Introduced layer-wise optimizer parameter groups with 0.1x LR backbone scaling factor 
-  (backbone_lr = 1e-5, head_lr = 1e-4) and 3-epoch linear warmup.
+2. Pretrained Weight Preservation:
+   Applying a high learning rate equally to the backbone and head destroys pretrained Real-ESRGAN weights. 
+   We use layer-wise optimizer parameter groups with a 0.1x LR backbone scaling factor and linear warmup.
 """
 
 import argparse

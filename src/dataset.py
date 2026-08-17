@@ -1,17 +1,16 @@
 """
 dataset.py — Domain Randomization & Real-ESRGAN Style Degradation Dataset for Semiconductor Metrology.
 
-Data Pipeline Faults Faced & Engineering Solutions History:
+Implementation Notes:
 ------------------------------------------------------------
-FAULT 1: Wild PSNR Oscillation Between Epochs
-- Initial Issue: In validation mode, synthetic noise parameters were generated randomly each epoch.
-  This caused validation PSNR to jump up and down by +/- 1.2 dB randomly, masking actual model progress.
-- Solution Implemented: Added deterministic index-based random seeding in `__getitem__` when `mode == 'val'`.
-  This guarantees that each validation image receives the EXACT SAME noise degradation every epoch.
+1. Deterministic Validation Noise:
+   In validation mode, generating synthetic noise randomly each epoch causes validation PSNR to oscillate, 
+   masking actual model progress. We use deterministic index-based random seeding in `__getitem__` so 
+   each validation image receives the exact same noise degradation every epoch.
 
-FAULT 2: Information Loss from Overly Aggressive Downsampling (4x)
-- Initial Issue: Applying 4x downsampling destroyed critical nanometer line grating evidence.
-- Solution Implemented: Calibrated downsampling to 2x (matching 128x128 LR input vs 256x256 clean GT target).
+2. Downsampling Calibration:
+   Aggressive 4x downsampling destroys critical nanometer line grating evidence in SEM images. We calibrate 
+   downsampling strictly to 2x, matching our 128x128 LR inputs to 256x256 clean HR targets.
 """
 
 import math

@@ -1,13 +1,13 @@
 """
 train_finetune_high_psnr.py — Fast Fine-Tuning Pipeline for 30–32 dB Metrology PSNR.
 
-Features:
-    1. Pretrained Weight Transfer: Initializes from Stage-1/Real-ESRGAN checkpoint.
-    2. Calibrated Physics Noise Distribution: Tuned for exact SEM metrology SNR.
-    3. ModelEMA Shadow: Continuous parameter averaging (decay=0.9995) to eliminate SGD noise.
-    4. Closed-Loop Metrology Loss: Spatially-weighted Charbonnier + Sobel Edge + dNCC + CD profile.
-    5. Decoupled Two-Stage Head with Restormer MDTA Global Attention.
-    6. Built-in 8-Fold TTA Validation with metric logging (PSNR, SSIM, CD error).
+Implementation Notes:
+------------------------------------------------------------
+1. Pretrained Weight Transfer: Initializes from Stage-1/Real-ESRGAN checkpoint.
+2. Calibrated Physics Noise Distribution: Tuned for exact SEM metrology SNR.
+3. ModelEMA Shadow: Continuous parameter averaging (decay=0.9995) to eliminate SGD noise.
+4. Closed-Loop Metrology Loss: Spatially-weighted Charbonnier + Sobel Edge + dNCC + CD profile.
+5. Built-in 8-Fold TTA Validation: Includes metric logging (PSNR, SSIM, CD error).
 """
 
 import argparse

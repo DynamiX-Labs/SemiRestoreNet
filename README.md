@@ -355,9 +355,13 @@ To resolve these limitations in future iterations:
 2. **TensorRT INT8 Quantization**: Quantizing the 23-RRDB trunk into INT8 precision using calibration datasets to accelerate 8-Fold TTA execution from 1.45 s down to < 100 ms on edge fab GPUs.
 3. **Active Curvilinear Polygon Loss**: Formulating continuous contour curvature loss functions ($\kappa = \frac{|x' y'' - y' x''|}{(x'^2 + y'^2)^{3/2}}$) to directly preserve non-Manhattan curvilinear EUV mask geometries.
 
+## 19. Further Documentation
+
+For detailed analysis of our engineering approach and physical justifications, please refer to the following documents:
+- [**Citations & References** (`docs/CITATIONS.md`)](docs/CITATIONS.md): Academic, physical, and mathematical citations justifying the network architecture and loss hierarchy.
+- [**Experimental Ablations & Implementation Details** (`docs/EXPERIMENTS_AND_TRIALS.md`)](docs/EXPERIMENTS_AND_TRIALS.md): Step-by-step module ablation study, physics rationale for core architectural components, and technical FAQ.
+
 ---
 
 ## License
 This project is licensed under the Apache 2.0 License — see the [LICENSE](LICENSE) file for details.
-
-

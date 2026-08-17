@@ -1,19 +1,22 @@
 """
 evaluate.py — 🔴 SUBMISSION-COMPLIANT Batch Inference Script.
 
-Engineering Rationale for Evaluation Infrastructure:
+Implementation Notes:
 ------------------------------------------------------
-1. 8-Fold Geometric Test-Time Augmentation (TTA) (--use_tta):
-   - Engineering Rationale: Averages predictions across 4 rotations x 2 flips. Eliminates directional orientation bias
-     and boosts PSNR by +0.4 to +1.2 dB on out-of-distribution semiconductor grating line patterns.
+1. 8-Fold Geometric Test-Time Augmentation (TTA):
+   SEM electron beam scanning introduces inherent directional biases. Averaging predictions across 
+   4 rotations and 2 flips structurally cancels out this scan-direction bias, lowering Critical 
+   Dimension (CD) errors significantly.
 
-2. Hardware Spatial Alignment & Padding (pad_to_multiple=16):
-   - Engineering Rationale: Swin Transformer shifted-window self-attention requires image dimensions to be divisible 
-     by window_size (8/16). Automatic reflection padding and unpadding prevents spatial dimension mismatch crashes.
+2. Hardware Spatial Alignment & Padding:
+   The FFT and shifted-window attention mechanisms require input dimensions to be divisible by 16. 
+   To avoid CUDA crashes on odd-sized crops, we dynamically reflection-pad images to the nearest 
+   multiple of 16 before inference, then crop back to original size.
 
 3. Zero-Dependency Hardware Inference:
-   - Engineering Rationale: Processes images directly from input_dir and outputs restored images to output_dir with 100% 
-     filename & format matching without requiring Ground Truth targets.
+   Designed for offline environments (e.g., KLA evaluation servers) without internet access or 
+   ground-truth dependencies. Automatically handles input casting (8-bit to float32 tensors) and 
+   lazy model loading to ensure robust execution.
 """
 
 import argparse

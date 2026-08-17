@@ -1,32 +1,33 @@
 """
 model.py — High-Performance Semiconductor Image Restoration & Super-Resolution Network.
 
-Architectural Innovations & Engineering Solutions:
+Implementation Notes:
 ---------------------------------------------------
 1. Restormer-Style Multi-Dconv Head Transposed Attention (MDTA):
-   - Computes cross-covariance across channels with linear spatial complexity O(HW C^2).
-   - Achieves an unconstrained global receptive field to capture periodic transistor pitches 
-     (FinFET arrays, DRAM capacitor cells) across the entire die without windowed boundary cuts.
+   Instead of standard spatial self-attention (O(N^2) complexity leading to OOM on large SEM images), 
+   MDTA computes cross-covariance across the channel dimension (O(C^2)). This provides a global 
+   receptive field to fix die-scale wafer charging drift efficiently.
 
 2. Explicit Noise-Conditioned Gated Fusion Module (NoiseConditionedGFM):
-   - Computes an analytical high-frequency Laplacian residual / noise-level map.
-   - Explicitly conditions the soft routing alpha(x) in [0, 1] between linear and homomorphic 
-     log-domain streams, relieving early convolutions from re-learning noise variance estimation.
+   We compute an explicit Laplacian high-frequency map to estimate noise and use it to dynamically 
+   route features. Bright/noisy pixels go to a log-domain trunk, and dark pixels to a linear trunk, 
+   avoiding filter compromise.
 
 3. Multi-Scale Manhattan Anisotropic Attention (MultiScaleManhattanAttention):
-   - Integrates multi-scale orthogonal strip convolutions: fine-pitch (1x7, 7x1) and 
-     coarse-pitch/wordlines (1x15, 15x1) alongside 7x7 spatial pooling to eliminate line collapse.
+   Chip layouts use orthogonal X/Y routing. Instead of square kernels, we use anisotropic strips 
+   (1x7, 7x1, 1x15, 15x1) to explicitly learn long wordlines and bus traces, preventing line-collapse.
 
 4. Decoupled Two-Stage Restoration Head (DecoupledRestorationHead):
-   - Decouples native-resolution (1x) spatial phase denoising from sub-pixel (2x) PixelShuffle edge synthesis.
+   Denoising and upsampling simultaneously amplifies sub-pixel noise. We decouple this by cleaning 
+   the structural phase at native 1x resolution first, and executing 2x PixelShuffle edge synthesis second.
 
 5. Structural Reparameterization (RepBlock):
-   - Multi-branch (3x3 + 1x1 + Identity) during training -> algebraically collapsed into a single 
-     standard 3x3 convolution at inference via `switch_to_deploy()`. Zero runtime speed penalty.
+   Uses a multi-branch topology (3x3 + 1x1 + Identity) during training for rich feature gradients, 
+   then algebraically collapses into a single 3x3 convolution for fast inference via `switch_to_deploy()`.
 
 6. SignedLogTransform & Pretrained RRDB Backbone Transfer:
-   - Preserves exact signs and handles negative detector floats without NaN crashes.
-   - Retains 23-RRDB dense feature extraction transfer from Real-ESRGAN.
+   SignedLogTransform safely compresses multiplicative speckle variance without crashing on negative 
+   unclipped detector offsets. The dense RRDB connections prevent gradient vanishing across deep layers.
 """
 
 import math

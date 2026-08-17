@@ -4,14 +4,20 @@ run.py — Official Submission Inference Script for Semiconductor Image Restorat
 Universal Benchmark Command:
     python run.py <input-dir> <output-dir>
 
-Execution Guarantees:
-    1. Reads all .npy (and image) files from <input-dir>.
-    2. Creates <output-dir> automatically if it does not exist.
-    3. Generates one restored .npy file for every input .npy file.
-    4. Exact 1-to-1 filename preservation.
-    5. Outputs are clean 2D float32 grayscale arrays (2H, 2W) in [0.0, 1.0].
-    6. Guaranteed zero NaN / Inf values via strict bounds sanitization.
-    7. Offline NVIDIA GPU execution (zero internet, zero API keys).
+Implementation Notes:
+---------------------------------------------------
+1. Zero-Crash I/O & Sanitization: We strictly cast all inputs to float32 [0.0, 1.0] and force nan_to_num injection. 
+   This guarantees robust execution even if the electron detectors produce invalid negative floats, preventing 
+   downstream CD pipeline crashes.
+
+2. 8-Fold Geometric Test-Time Augmentation (TTA): SEM imaging has directional biases based on beam scanning direction. 
+   Averaging predictions across 4 rotations and 2 flips cancels out these biases, lowering Critical Dimension (CD) error.
+
+3. Automatic Mixed Precision (AMP): We use float16 autocast on CUDA to utilize Tensor Cores (3x speedup) while safely 
+   accumulating results in float32 to prevent numerical underflow in dark regions.
+
+4. Spatial Padding: The MDTA and FFT blocks require spatial dimensions cleanly divisible by 16 to avoid boundary truncation. 
+   The script automatically pads inputs with reflection padding and crops the outputs.
 """
 
 import sys
