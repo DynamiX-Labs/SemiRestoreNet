@@ -152,11 +152,11 @@ Model performance is evaluated across four metrics:
 *Note on Evaluation Scope: The 39.71 dB PSNR shown below is measured on a single representative high-density periodic test sample (`000000.npy`). Across the complete 50-sample benchmark spanning all 5 degradation regimes (including heavy multiplicative speckle), SemiRestoreNet-v3 achieves an official macro-average of **30.01 dB PSNR** (with Pure 2x SR averaging **33.90 dB**, peaking up to 34.84 dB).*
 
 #### (a) Representative Test Sample A: Semiconductor Periodic Grating Pattern (`000000.npy`)
-*Single-sample metrics: PSNR: 39.71 dB | SSIM: 0.9774 | CD Error: 0.080 nm*
+Representative test sample: **39.71 dB PSNR**, **0.9774 SSIM**, **0.080 nm CD error**.
 ![Periodic Grating Array Restoration](docs/images/comparison_00.png)
 
 #### (b) Representative Test Sample B: Transistor Contact Array (`000106.npy`)
-*Single-sample metrics under Speckle + 2x SR: PSNR: 32.23 dB | SSIM: 0.9368 | CD Error: 0.215 nm*
+Representative test sample (Speckle + 2x SR): **32.23 dB PSNR**, **0.9368 SSIM**, **0.215 nm CD error**.
 ![Transistor Array Restoration](docs/images/comparison_01.png)
 
 ---
