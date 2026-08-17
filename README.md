@@ -4,6 +4,11 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Hardware](https://img.shields.io/badge/Hardware-NVIDIA_RTX_|_A100_|_H100-green.svg)](https://developer.nvidia.com/cuda-zone)
 [![ONNX](https://img.shields.io/badge/Deployment-ONNX_Runtime_1.16+-005CED.svg)](https://onnxruntime.ai/)
+[![Hackathon](https://img.shields.io/badge/Event-Semiconductor_Hackathon-orange.svg)]()
+[![Team](https://img.shields.io/badge/Team-TECH_AVERIX-blueviolet.svg)]()
+
+> **Engineered by Team TECH AVERIX for the Semiconductor Hackathon**
+> A physics-grounded deep learning and sub-pixel metrology restoration repository.
 
 ---
 
@@ -368,6 +373,19 @@ To resolve these limitations in future iterations:
 For detailed analysis of our engineering approach and physical justifications, please refer to the following documents:
 - [**Citations & References** (`docs/CITATIONS.md`)](docs/CITATIONS.md): Academic, physical, and mathematical citations justifying the network architecture and loss hierarchy.
 - [**Experimental Ablations & Implementation Details** (`docs/EXPERIMENTS_AND_TRIALS.md`)](docs/EXPERIMENTS_AND_TRIALS.md): Step-by-step module ablation study, physics rationale for core architectural components, and technical FAQ.
+
+---
+
+## 20. Team TECH AVERIX
+
+This repository and model architecture were designed and engineered for the **Semiconductor Hackathon** by **Team TECH AVERIX**:
+
+| Team Member | Engineering Role | Core Contributions |
+|:---|:---|:---|
+| **ARYA MGC** | **Team Lead & ML/Model Architect** | End-to-end architecture design, 23-RRDB + MDTA integration, 2D FFT Focal Fourier Block, Homomorphic Log-Domain pipeline, and project leadership. |
+| **SRI DESIYAN V** | **ML Engineer & Training Lead** | 30-Epoch fine-tuning pipeline, ModelEMA synchronization, Online Hard Example Mining (OHEM), loss weight scheduling, and GPU acceleration. |
+| **YAALINI T** | **Research & Documentation Lead** | Metrology bibliography curation, physical degradation formulations, mathematical proofs, experimental ablation logs, and scientific documentation. |
+| **VAISHNAVI** | **Metrology & Evaluation Engineer** | Chamfer distance edge metrology, sub-pixel defect localization benchmark, quality metrics validation (PSNR, SSIM, LPIPS), and `run.py` verification. |
 
 ---
 
