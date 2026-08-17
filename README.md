@@ -159,13 +159,13 @@ Representative test sample: **39.71 dB PSNR**, **0.9774 SSIM**, **0.080 nm CD er
 Representative test sample (Speckle + 2x SR): **32.23 dB PSNR**, **0.9368 SSIM**, **0.215 nm CD error**.
 ![Transistor Array Restoration](docs/images/comparison_01.png)
 
-#### (c) Representative Test Sample C: 3D-FinFET Logic Gate Array (`finfet_0007_ref.png`)
-Representative test sample (Gaussian + 2x SR): **27.49 dB PSNR**, **0.8523 SSIM**, **0.011 nm CD error**.
-![3D-FinFET Logic Gate Array Restoration](docs/images/comparison_02.png)
+#### (c) Representative Test Sample C: 3D-FinFET Gate Array (`000061.npy`)
+Representative test sample (Gaussian + 2x SR): **34.09 dB PSNR**, **0.8481 SSIM**, **0.099 nm CD error**.
+![3D-FinFET Gate Array Restoration](docs/images/comparison_02.png)
 
-#### (d) Representative Test Sample D: High-Density 3D-DRAM Capacitor Array (`dram_0001_ref.png`)
-Representative test sample (Multiplicative Speckle + 2x SR): **24.45 dB PSNR**, **0.8524 SSIM**, **0.039 nm CD error**.
-![3D-DRAM Capacitor Array Restoration](docs/images/comparison_03.png)
+#### (d) Representative Test Sample D: High-Density 3D-DRAM Array (`000002.npy`)
+Representative test sample (Pure 2x SR): **42.41 dB PSNR**, **0.9797 SSIM**, **0.024 nm CD error**.
+![High-Density 3D-DRAM Array Restoration](docs/images/comparison_03.png)
 
 ---
 
