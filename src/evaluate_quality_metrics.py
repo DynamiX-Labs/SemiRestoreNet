@@ -2,10 +2,18 @@
 evaluate_quality_metrics.py - Official Hackathon Quality Metrics Benchmark v2.
 Enhancements: Overlapping tile stitching, per-degradation breakdown, 8-Fold TTA, Model-Soup.
 """
-import os, glob, argparse, random, torch, cv2, numpy as np, matplotlib
+import os, sys, glob, argparse, random, torch, cv2, numpy as np, matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from pathlib import Path
+
+# Add src and root to sys.path
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_SRC_DIR = os.path.join(_ROOT_DIR, 'src')
+for _p in [_ROOT_DIR, _SRC_DIR]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 from model import create_teacher_model
 from utils import get_device
 from metrics import compute_psnr, compute_ssim, compute_lpips, compute_cd_error

@@ -22,6 +22,13 @@ import time
 import yaml
 from pathlib import Path
 
+# Add src and root to sys.path
+_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+_SRC_DIR = os.path.join(_ROOT_DIR, 'src')
+for _p in [_ROOT_DIR, _SRC_DIR]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 # Configure PyTorch memory allocator to avoid fragmentation on Windows GPUs
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
