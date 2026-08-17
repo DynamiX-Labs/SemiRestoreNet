@@ -213,23 +213,39 @@ Representative test sample (Speckle + 2x SR): **32.23 dB PSNR**, **0.9368 SSIM**
 
 ## 9. Repository Structure
 
+The repository is cleanly structured into modular directories corresponding to all 6 mandatory competition requirements:
+
 ```text
 SemiRestoreNet/
-├── run.py                       # Official One-Command Submission Benchmark Script (python run.py <in> <out>)
-├── model.py                     # SemiRestoreNet-v3 (23 RRDBs + MDTA + 2D FFT + U-Pyramid)
-├── losses.py                    # Metrology Loss Stack (OHEM Charbonnier, SSIM, dNCC, CD Loss)
-├── dataset.py                   # Second-Order Physics Degradation Pipeline
-├── evaluate.py                  # Standalone Submission Evaluation Script
-├── evaluate_quality_metrics.py  # 5-Task Benchmark Evaluator (PSNR, SSIM, LPIPS, CD Error)
-├── train_finetune_high_psnr.py  # 30-Epoch Training Script with Layer-Wise Learning Rates
-├── export_onnx.py               # ONNX Runtime Exporter and Latency Benchmark
-├── metrics.py                   # Metrology Validation Metrics (CD Error, PSNR, SSIM)
-├── requirements.txt             # Environment Dependencies
-├── checkpoints/
-│   └── ensemble_model.pth       # Final Submission Checkpoint (69.98 MB)
-├── submission_restored_outputs/ # 400 Restored Test Benchmark Outputs
-├── docs/images/                 # Metrology Figures and Visual Comparisons
-└── README.md                    # Technical Documentation
+├── run.py                       # [DELIVERABLE 2] Official Evaluation Script (python run.py <in> <out>)
+├── evaluate.py                  # [DELIVERABLE 2] Standalone CLI Evaluator (with TTA & sliding window)
+├── train_finetune_high_psnr.py  # [DELIVERABLE 3] Official 30-Epoch Training & Fine-Tuning Script
+├── train.py                     # [DELIVERABLE 3] Base Training Script
+├── requirements.txt             # [DELIVERABLE 6] Pinned Environment Dependencies
+├── README.md                    # [DELIVERABLE 1] Full Setup, Architecture, and Replication Guide
+├── LICENSE                      # Apache 2.0 Open Source License
+├── model.py                     # SemiRestoreNet-v3 Core Model Architecture (RRDB + MDTA + 2D FFT)
+├── dataset.py                   # Physics-Based Second-Order SEM Degradation Pipeline
+├── losses.py                    # Metrology Loss Stack (Charbonnier, SSIM, dNCC, CD Loss)
+├── metrics.py                   # Metrology Validation Metrics (CD Edge Error, PSNR, SSIM)
+├── utils.py                     # Geometric TTA and Tensor Transformation Utilities
+├── checkpoints/                 # [DELIVERABLE 4] Final Trained Model Weights
+│   └── ensemble_model.pth       # Model-Soup Final Checkpoint (66.74 MB)
+├── restored_test_outputs/       # [DELIVERABLE 5] 400 Restored Test Benchmark Outputs (.npy)
+├── configs/                     # YAML Training & Architecture Configurations
+│   ├── train_config.yaml
+│   └── finetune_stage2.yaml
+├── docs/                        # Scientific Documentation & Publication Figures
+│   ├── images/
+│   ├── CITATIONS.md
+│   └── EXPERIMENTS_AND_TRIALS.md
+└── tools/                       # Diagnostic, Benchmarking & Export Utilities
+    ├── export_onnx.py
+    ├── benchmark_localization.py
+    ├── benchmark_students.py
+    ├── generate_dataset.py
+    ├── uncertainty.py
+    └── visual_test.py
 ```
 
 ---

@@ -21,22 +21,24 @@ checkpoints/*
 *.safetensors
 *.onnx
 
-# Datasets, Raw Images & Arrays
+# Datasets, Raw Images & Arrays (Raw input data excluded)
 train/
 Test_NoisyLR/
 data/
 test_inputs/
-*.npy
 *.csv
+
+# Allow Restored Test Outputs (Mandatory Hackathon Deliverable)
+!restored_test_outputs/
+!restored_test_outputs/*.npy
 
 # Training runs & logs
 runs/
 .system_generated/
 *.log
 
-# Evaluation & Test outputs
+# Temporary test outputs
 evaluation_results/
-restored_test_outputs/
 test_outputs/
 submission_outputs/
 submission_restored_outputs/
