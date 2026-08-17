@@ -224,14 +224,15 @@ SemiRestoreNet/
 ├── requirements.txt             # [DELIVERABLE 6] Pinned Environment Dependencies
 ├── README.md                    # [DELIVERABLE 1] Full Setup, Architecture, and Replication Guide
 ├── LICENSE                      # Apache 2.0 Open Source License
-├── model.py                     # SemiRestoreNet-v3 Core Model Architecture (RRDB + MDTA + 2D FFT)
-├── dataset.py                   # Physics-Based Second-Order SEM Degradation Pipeline
-├── losses.py                    # Metrology Loss Stack (Charbonnier, SSIM, dNCC, CD Loss)
-├── metrics.py                   # Metrology Validation Metrics (CD Edge Error, PSNR, SSIM)
-├── utils.py                     # Geometric TTA and Tensor Transformation Utilities
+├── src/                         # Core Architecture & Pipeline Package
+│   ├── model.py                 # SemiRestoreNet-v3 Core Model (RRDB + MDTA + 2D FFT)
+│   ├── dataset.py               # Physics-Based Second-Order SEM Degradation Pipeline
+│   ├── losses.py                # Metrology Loss Stack (Charbonnier, SSIM, dNCC, CD Loss)
+│   ├── metrics.py               # Metrology Validation Metrics (CD Edge Error, PSNR, SSIM)
+│   └── utils.py                 # Geometric TTA and Tensor Transformation Utilities
 ├── checkpoints/                 # [DELIVERABLE 4] Final Trained Model Weights
 │   └── ensemble_model.pth       # Model-Soup Final Checkpoint (66.74 MB)
-├── restored_test_outputs/       # [DELIVERABLE 5] 400 Restored Test Benchmark Outputs (.npy)
+├── restored_test_outputs/       # [DELIVERABLE 5] Restored Test Benchmark Outputs
 ├── configs/                     # YAML Training & Architecture Configurations
 │   ├── train_config.yaml
 │   └── finetune_stage2.yaml
