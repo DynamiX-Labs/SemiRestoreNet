@@ -57,6 +57,8 @@ def load_image_grayscale(path: str) -> tuple:
             pass
         elif arr.ndim == 3:
             arr = arr.squeeze()
+        if arr.max() > 1.0:
+            arr = arr / 255.0
         tensor = torch.from_numpy(arr).unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
         return tensor, {'is_npy': True, 'size': (arr.shape[1], arr.shape[0])}
         
@@ -220,7 +222,7 @@ def restore_image(
     device: torch.device,
     pad_multiple: int = 16,
     use_tta: bool = False,
-    multi_scale: bool = True,
+    multi_scale: bool = False,
 ) -> torch.Tensor:
     """Run restoration on a single image tensor with optional multi-scale geometric TTA.
     
