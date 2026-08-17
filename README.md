@@ -159,8 +159,6 @@ Model performance is evaluated across four metrics:
 
 ### 8.2 Official Quality Metrics Benchmark (50 Samples x 5 Tasks)
 
-![Official Quality Metrics Scorecard](docs/images/hackathon_quality_metrics.png)
-
 ```text
 ========================================================================================
              OFFICIAL QUALITY METRICS BENCHMARK (50 SAMPLES x 5 TASKS)
