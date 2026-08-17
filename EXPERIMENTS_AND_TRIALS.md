@@ -89,3 +89,4 @@ Every architectural module was derived through systematic ablation experiments o
 
 #### Q4: "Why does 8-Fold TTA take 1.45s compared to 12.5ms for single-pass?"
 > *"Single-pass inference on GPU runs at 80 FPS (12.5 ms), which is ideal for real-time inline fab tool inspection. 8-Fold TTA performs 8 independent spatial rotations and flips with tensor re-alignment, providing an additional +1.15 dB PSNR gain and noise cancellation for offline high-precision metrology certification where maximum accuracy is required."*
+
