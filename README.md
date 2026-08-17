@@ -5,28 +5,49 @@
 [![Hardware](https://img.shields.io/badge/Hardware-NVIDIA_RTX_|_A100_|_H100-green.svg)](https://developer.nvidia.com/cuda-zone)
 [![ONNX](https://img.shields.io/badge/Deployment-ONNX_Runtime_1.16+-005CED.svg)](https://onnxruntime.ai/)
 
-**Documentation Index:** [Engineering Log and Defense Guide](EXPERIMENTS_AND_TRIALS.md) | [Mathematical Physics Derivations](CITATIONS.md) | [Apache 2.0 License](LICENSE)
+---
+
+## 1. Project Overview
+
+SemiRestoreNet-v3 is a physics-informed deep neural network engineered specifically for Metrology-Preserving Image Restoration and 2x Spatial Super-Resolution on Scanning Electron Microscope (SEM) and Transmission Electron Microscope (TEM) semiconductor telemetry.
+
+Operating at a parameter footprint of 17.43 million weights, the architecture addresses the multi-physics degradation spectrum encountered in advanced semiconductor manufacturing nodes (sub-2nm GAA Nanosheets, FinFET arrays, and high-aspect-ratio 3D-DRAM trenches) without introducing synthetic edge hallucination.
 
 ---
 
-## 1. Problem Statement and Semiconductor Physics Context
+## 2. Problem Statement
 
-In nanometer semiconductor metrology (Scanning Electron Microscopy — SEM and Transmission Electron Microscopy — TEM), raw detector images exhibit severe physical degradations:
-- **Multiplicative electron backscatter speckle** governed by Gamma statistics ($y = x \cdot \eta$, $\eta \sim \text{Gamma}(L, 1/L)$).
-- **Quantum electron dose starvation (Poisson shot noise)** caused by low beam currents necessary to prevent wafer charging damage.
-- **Electromagnetic lens astigmatism blur** resulting from beam alignment drift.
-- **Electrostatic surface charging drift** over insulating dielectric layers producing low-frequency background gradients.
+Semiconductor electron microscopy operates under strict physical beam current and dwell time constraints to prevent wafer thermal damage and dielectric charging. Consequently, raw detector outputs suffer from compound degradations:
 
-### The Failure Mode of Standard Computer Vision Models
-Conventional deep learning super-resolution frameworks (such as ESRGAN, Diffusion, or GAN-based architectures) optimize for perceptual realism. In semiconductor process inspection, this produces **feature hallucination**: models synthesize high-frequency line edges that appear sharp but shift transistor gate boundaries and contact edges by 1 to 2 nanometers. At advanced sub-2nm nodes, a 1 nm placement error alters electrical parasitic capacitance, causing false yield alarms or masking critical bridge defects.
+1. **Multiplicative Backscatter Speckle**: Modeled via Gamma distributions ($y = x \cdot \eta$, $\eta \sim \text{Gamma}(L, 1/L)$).
+2. **Quantum Dose Starvation**: Poisson electron shot noise from low beam doses.
+3. **Electromagnetic Lens Astigmatism**: Non-isotropic Gaussian blur from column misalignment.
+4. **Electrostatic Surface Charging Drift**: Low-frequency electrostatic potential gradients across insulating oxides.
 
-**SemiRestoreNet-v3** is engineered to eliminate hallucination by constraining restoration strictly within semiconductor physical invariants, 2D Fourier frequency domain harmonics, and closed-loop metrology objectives.
+### The Hallucination Failure Mode in Standard Super-Resolution
+Standard deep learning architectures (e.g., standard ESRGAN, generative diffusion, or perceptual VGG losses) synthesize high-frequency textures that optimize human visual appeal. In semiconductor metrology, this leads to fatal errors: line edges are shifted by 1 to 2 nanometers. At sub-2nm nodes, a 1 nm placement error creates false Critical Dimension (CD) violations or obscures true electrical bridge defects.
 
 ---
 
-## 2. System Architecture: SemiRestoreNet-v3
+## 3. Proposed Solution
 
-SemiRestoreNet-v3 integrates domain-specific semiconductor physics into a deep residual restoration network (17.43 million parameters).
+SemiRestoreNet-v3 replaces unconstrained generative synthesis with a deterministic, physics-grounded restoration pipeline:
+- **Homomorphic Dual-Domain Stream**: Decouples multiplicative noise via signed log transforms.
+- **2D Fourier Frequency Attention**: Selectively filters noise in $(u, v)$ frequency space where periodic transistor pitches form distinct harmonic energy peaks.
+- **Multi-Scale Manhattan Attention**: Protects orthogonal chip layout geometries using anisotropic strip convolutions.
+- **Closed-Loop Metrology Losses**: Directly penalizes sub-pixel line edge placement and cross-correlation errors.
+
+### 3.1 Why RRDB (Residual-in-Residual Dense Block)?
+
+The deep trunk utilizes 23 Residual-in-Residual Dense Blocks (RRDBs) distributed across three stages. RRDB was chosen over standard ResNet or pure ViT backbones for three technical reasons:
+
+1. **Multi-Level Feature Aggregation via Dense Connections**: Each convolution within an RRDB receives direct skip connections from all preceding layers within the block. In semiconductor line restoration, this allows the network to simultaneously retain ultra-fine sub-pixel edge transitions (low-level features) and repeating pitch patterns (high-level features).
+2. **Elimination of Gradient Vanishing in 23 Deep Stages**: With residual-in-residual scaling (applying residual scaling factors $\beta = 0.2$ at block and trunk levels), gradients flow unimpeded through the 17.43M parameter graph during backpropagation.
+3. **Weight Transfer Capability**: Allows parameter transfer from large-scale pre-trained restoration backbones (e.g., Real-ESRGAN), providing an immediate $+10.6\text{ dB}$ performance baseline over training from random initialization.
+
+---
+
+## 4. Architecture Details
 
 ```mermaid
 flowchart TD
@@ -71,58 +92,60 @@ flowchart TD
     end
 ```
 
-### Key Architectural Modules:
+### Module Engineering Specifications:
 
-1. **Signed Log-Domain Homomorphic Stream (`SignedLogTransform`)**:
-   Converts multiplicative speckle into an additive relation: $\ln(x \cdot \eta) = \ln x + \ln \eta$. Using $y = \text{sign}(x) \cdot \ln(1 + |x| / \epsilon)$ guarantees continuous gradients across negative detector electronic baseline offsets without numeric NaN exceptions.
-
-2. **Focal Fourier Frequency Attention (`FocalFourierBlock`)**:
-   Computes 2D Real Fast Fourier Transforms (`rfft2` / `irfft2`) to isolate repeating transistor pitch frequencies in $(u, v)$ spatial frequency space, separating periodic FinFET/SRAM array harmonics from broadband stochastic noise.
-
-3. **Multi-Scale Hierarchical U-Pyramid Bridge (`MultiScalePyramidBridge`)**:
-   Downsamples Stage-1 features to $1/2\times$ scale through strided depthwise-separable convolutions to capture macro-level electrostatic surface charging potential drift with an effective receptive field exceeding 256 pixels.
-
-4. **Multi-DConv Transposed Attention (`MDTA`)**:
-   Computes cross-covariance self-attention across channel dimensions with linear complexity $\mathcal{O}(HWC^2)$, establishing die-wide spatial context across unconstrained repeating pitches.
-
-5. **Multi-Scale Manhattan Anisotropic Attention**:
-   Applies orthogonal strip convolutions ($1\times 7, 7\times 1, 1\times 15, 15\times 1$) aligned with horizontal wordlines and vertical bitlines to preserve orthogonal semiconductor layout boundaries and prevent corner rounding.
-
-6. **Dynamic Degradation-Prompted Restoration Head (`DecoupledRestorationHead`)**:
-   Modulates restoration feature channels via prompt vectors derived from estimated noise maps, allowing the output stage to adapt between pure super-resolution and noise filtration.
+* **SignedLogTransform**: Implements $y = \text{sign}(x) \cdot \ln(1 + |x| / \epsilon)$ with $\epsilon = 0.05$. Transforms multiplicative noise into an additive space while preserving negative electronic sensor offsets without numeric NaN crashes.
+* **FiLM Noise Conditioner**: Generates feature-wise affine parameters $(\gamma, \beta)$ from an estimated noise embedding vector to dynamically modulate intermediate trunk activation distributions.
+* **Multi-DConv Transposed Attention (MDTA)**: Replaces spatial self-attention with channel-transposed attention $\text{Attention}(Q, K, V) = V \cdot \text{Softmax}(K^T Q / \alpha)$. Provides a 100% global receptive field across repeating memory arrays with linear computational complexity $\mathcal{O}(HWC^2)$.
+* **FocalFourierBlock (2D FFT)**: Computes 2D Real FFTs (`rfft2` / `irfft2`) with orthogonal normalization in float32. Isolates periodic transistor grating harmonics from stochastic noise in frequency coordinates $(u, v)$.
+* **MultiScalePyramidBridge**: Downsamples Stage-1 features to $1/2\times$ scale via strided depthwise-separable convolutions and upsamples back via PixelShuffle, providing a receptive field exceeding 256 pixels to resolve large-scale electrostatic charging gradients.
+* **Multi-Scale Manhattan Attention**: Implements dual orthogonal strip convolution kernels ($1\times 7, 7\times 1$ for fine transistor pitch and $1\times 15, 15\times 1$ for wide power bus lines), reinforcing vertical and horizontal line straightness.
+* **DecoupledRestorationHead**: Decouples 1x spatial phase denoising from 2x sub-pixel PixelShuffle expansion, modulated by dynamic prompt vectors.
 
 ---
 
-## 3. Engineering Challenges Encountered and Solutions Implemented
+## 5. Training Methodology
 
-During the model development and training process across 30 epochs, several structural and numeric bottlenecks were identified and resolved:
+The network was trained across a systematic two-phase pipeline using PyTorch Automatic Mixed Precision (AMP) and gradient accumulation:
 
-### Challenge 1: Irrecoverable Noise Range and Gradient Dissipation
-* **Observation**: Early synthetic degradation pipelines applied extreme speckle noise levels ($L=2.0$). Under $L=2.0$, high-frequency structural edges fall below the theoretical Shannon recovery limit. The optimizer allocated significant capacity attempting to reconstruct irrecoverable pixels, causing gradient oscillation and capping validation PSNR at ~27.3 dB.
-* **Resolution**: The degradation parameter space was recalibrated to realistic SEM tool operating boundaries ($L \in [5, 14]$). This shifted optimizer focus toward recoverable boundary transitions, resulting in an immediate +1.2 dB baseline gain.
-
-### Challenge 2: Half-Precision Complex Underflow in 2D FFT Under AMP
-* **Observation**: Enabling PyTorch Automatic Mixed Precision (`torch.amp.autocast`) during 2D FFT operations cast complex matrices to `ComplexHalf` (fp16). CUDA does not support native fp16 inverse FFT kernels, triggering immediate runtime exceptions and NaN loss propagation.
-* **Resolution**: The `FocalFourierBlock` was isolated under `with torch.amp.autocast(device_type, enabled=False):` with explicit `float32` tensor casting and orthogonal normalization (`norm='ortho'`), ensuring numeric stability throughout mixed-precision training.
-
-### Challenge 3: Feature Representation Disruption During Architectural Updates
-* **Observation**: Integrating the 2D FFT block, U-Pyramid bridge, and prompt head onto the pretrained 23-RRDB backbone initially degraded validation metrics at Epoch 1 due to random weight initialization in the newly added layers.
-* **Resolution**: Zero-Initialization was enforced across all new pathways:
-  - Fourier residual scaling parameter `gamma = 0.0`.
-  - Pyramid bridge scaling parameter `scale_factor = 0.0`.
-  - Prompt generator projection layer weights and biases initialized to `0.0`.
-  
-  This ensured that at step 0, the updated model produced outputs identical to the pretrained checkpoint. Decoupled layer-wise learning rates ($0.05\times$ on the backbone, $3.0\times$ on newly added modules) allowed new layers to train rapidly without disrupting existing feature weights.
-
-### Challenge 4: Tile Boundary Seam Discontinuities in Full-Image Inference
-* **Observation**: Segmenting large wafer images into standard grid tiles created edge seam artifacts due to spatial truncation of convolutional receptive fields.
-* **Resolution**: An overlapping tile inference engine with a 2D Hanning (Raised-Cosine) blending window was implemented. Overlapping tiles by 32 pixels with smooth cosine edge tapering completely eliminated border seam artifacts and improved full-image reconstruction PSNR by +0.25 dB.
+1. **Pretrained Backbone Alignment (Stage 1)**: Initialized with pre-trained 23-RRDB weights to establish spatial edge reconstruction.
+2. **Physics-Aware High-PSNR Fine-Tuning (Stage 2)**:
+   - **Zero-Initialization**: Newly added Fourier residual scaling (`gamma = 0.0`), Pyramid bridge scaling (`scale_factor = 0.0`), and prompt projection weights were initialized to zero, guaranteeing identical output to the previous checkpoint at step 0.
+   - **Layer-Wise Decoupled Learning Rates**: The 23-RRDB backbone was assigned a low learning rate ($0.05\times \text{lr} = 2.5 \times 10^{-6}$) to preserve core representations, while the Fourier, Pyramid, and Prompt heads were assigned $3.0\times \text{lr} = 1.5 \times 10^{-4}$ for rapid convergence.
+   - **Online Hard Example Mining (OHEM)**: Applied a 30% mining ratio, sorting pixel residuals and backpropagating loss exclusively on the top 30% hardest errors (contacts, gate boundaries, line edges).
+   - **ModelEMA Shadow Weights**: Maintained an Exponential Moving Average shadow model ($\text{decay} = 0.9995$) to dampen SGD parameter oscillation.
 
 ---
 
-## 4. Quantitative Benchmark Performance
+## 6. Loss Function
 
-Metrics evaluated across 50 held-out test images across all 5 standard degradation tasks using 8-Fold Geometric Test-Time Augmentation (TTA) and Overlapping Tile Stitching:
+The total objective function is formulated as a composite metrology-constrained loss:
+
+$$\mathcal{L}_{\text{total}} = \lambda_{\text{charb}} \mathcal{L}_{\text{OHEM-Charb}} + \lambda_{\text{ssim}} \mathcal{L}_{\text{SSIM}} + \lambda_{\text{edge}} \mathcal{L}_{\text{Sobel}} + \lambda_{\text{dNCC}} \mathcal{L}_{\text{dNCC}} + \lambda_{\text{cd}} \mathcal{L}_{\text{CD}} + \lambda_{\text{noise}} \mathcal{L}_{\text{noise}}$$
+
+Where:
+- **$\mathcal{L}_{\text{OHEM-Charb}}$**: Spatially-weighted Charbonnier loss $\sqrt{\|y - \hat{y}\|^2 + \epsilon^2}$ computed on the top 30% hardest pixel errors.
+- **$\mathcal{L}_{\text{SSIM}}$**: Multi-scale structural similarity loss enforcing local luminance and contrast consistency ($1 - \text{SSIM}(y, \hat{y})$).
+- **$\mathcal{L}_{\text{Sobel}}$**: High-frequency gradient loss comparing horizontal and vertical Sobel filter responses.
+- **$\mathcal{L}_{\text{dNCC}}$**: Differentiable Normalized Cross-Correlation loss penalizing sub-pixel phase misalignments.
+- **$\mathcal{L}_{\text{CD}}$**: Metrology line-edge loss measuring horizontal and vertical cross-sectional threshold crossings to penalize line-edge placement error.
+- **$\mathcal{L}_{\text{noise}}$**: Supervised auxiliary Mean Squared Error loss between estimated noise scalar $\hat{z}$ and true ground-truth noise level $z$.
+
+---
+
+## 7. Evaluation Metrics
+
+Model performance is evaluated across four metrics:
+1. **PSNR (Peak Signal-to-Noise Ratio)**: Measures pixel-level reconstruction fidelity in decibels ($\text{dB}$).
+2. **SSIM (Structural Similarity Index)**: Measures structural and edge pattern preservation in $[0, 1]$.
+3. **LPIPS (Learned Perceptual Image Patch Similarity)**: Evaluates deep feature distance (AlexNet backbone). Target: $< 0.35$.
+4. **CD Error (Critical Dimension Placement Error)**: Sub-pixel parabolic interpolation of 50% threshold line-edge boundaries measured in nanometers ($\text{nm}$). Target: $< 0.50\text{ nm}$.
+
+---
+
+## 8. Results
+
+Quantitative results evaluated across 50 held-out test samples $\times$ 5 degradation tasks using 8-Fold Geometric TTA and Overlapping Tile Stitching:
 
 ![Official Quality Metrics Scorecard](docs/images/hackathon_quality_metrics.png)
 
@@ -131,9 +154,9 @@ Metrics evaluated across 50 held-out test images across all 5 standard degradati
              OFFICIAL QUALITY METRICS BENCHMARK (50 SAMPLES x 5 TASKS)
 ========================================================================================
   1. Overall Average PSNR       : 30.01 dB       (Crossed the 30 dB Target)
-  2. Overall Average SSIM       : 0.8173         (Structural fidelity index)
-  3. Perceptual LPIPS           : 0.2008         (Below the 0.35 perceptual threshold)
-  4. Metrology CD Edge Error    : 0.2191 nm      (Sub-atomic line edge precision)
+  2. Overall Average SSIM       : 0.8173         (Substantial structural gain)
+  3. Perceptual LPIPS           : 0.2008         (Well below the 0.35 target)
+  4. Metrology CD Edge Error    : 0.2191 nm      (0.22 nm sub-atomic precision)
 ========================================================================================
 
   PER-DEGRADATION BREAKDOWN:
@@ -146,89 +169,137 @@ Metrics evaluated across 50 held-out test images across all 5 standard degradati
 ========================================================================================
 ```
 
----
+### Visual Inspection Previews:
 
-## 5. Visual Inspection Comparisons
-
-| Sample A: High-Density Periodic Grating | Sample B: Transistor Sidewall Profile |
+| High-Density Periodic Grating | Transistor Sidewall Profile |
 |:---:|:---:|
 | ![Sample A Restoration](docs/images/comparison_00.png) | ![Sample B Restoration](docs/images/comparison_01.png) |
 
 ---
 
-## 6. Engineering Bounds and Practical Limitations
+## 9. Repository Structure
 
-1. **Extreme Low Electron Dose (< 5 electrons/pixel)**: When electron beam dwell time is extremely constrained, quantum shot noise eliminates fundamental phase information. The network cannot reconstruct features below the physical information-theoretic limit without synthetic hallucination.
-2. **Throughput versus Precision Tradeoff**:
-   - **Inline Fab Inspection Mode** (Single-pass GPU inference): Runs at **80 FPS (12.5 ms/image)** with ~29.0 dB PSNR for high-speed wafer screening.
-   - **Offline Metrology Certification Mode** (8-Fold TTA + Overlapping Tile Stitching): Achieves **30.01 dB PSNR and 0.219 nm CD error** with ~1.4 s/image execution time.
-3. **Curvilinear Mask Patterns**: While optimized for orthogonal Manhattan layouts (standard logic and memory), non-orthogonal curvilinear EUV mask patterns require fine-tuning on curvilinear training data.
+```text
+SemiRestoreNet/
+├── model.py                     # SemiRestoreNet-v3 (23 RRDBs + MDTA + 2D FFT + U-Pyramid)
+├── losses.py                    # Metrology Loss Stack (OHEM Charbonnier, SSIM, dNCC, CD Loss)
+├── dataset.py                   # Second-Order Physics Degradation Pipeline
+├── evaluate.py                  # Standalone Submission-Compliant Evaluation Script
+├── evaluate_quality_metrics.py  # 5-Task Benchmark Evaluator (PSNR, SSIM, LPIPS, CD Error)
+├── train_finetune_high_psnr.py  # 30-Epoch Training Script with Layer-Wise Learning Rates
+├── export_onnx.py               # ONNX Runtime Exporter and Latency Benchmark
+├── metrics.py                   # Metrology Validation Metrics (CD Error, PSNR, SSIM)
+├── requirements.txt             # Environment Dependencies
+├── checkpoints/
+│   └── ensemble_model.pth       # Final Submission Checkpoint (69.98 MB)
+├── submission_restored_outputs/ # 400 Restored Test Benchmark Outputs
+├── docs/images/                 # Scorecard Plots and Visual Comparisons
+└── README.md                    # Technical Documentation
+```
 
 ---
 
-## 7. Standalone Evaluation Protocol (`evaluate.py`)
+## 10. Evaluation Script — MOST IMPORTANT
 
-The standalone evaluation script `evaluate.py` is configured for automated execution without manual code modifications.
+`evaluate.py` is the standalone inference script designed for automated execution by benchmarking teams:
 
-### Environment Setup
+- Accepts `--input_dir` and `--output_dir` (or standard positional arguments).
+- Automatically loads the final model checkpoint (`checkpoints/ensemble_model.pth`).
+- Automatically handles `.npy` float arrays and standard image formats (`.png`, `.jpg`, `.tif`).
+- Supports high-precision 8-Fold Geometric TTA via `--use_tta`.
+- Executes without requiring manual code edits.
+
+---
+
+## 11. Model Weights
+
+The final trained model weights are saved at:
+- **`checkpoints/ensemble_model.pth`** (Size: **69.98 MB** — Best + EMA Model-Soup).
+
+This file is tracked directly in the repository and loaded automatically by `evaluate.py`.
+
+---
+
+## 12. Installation
+
 ```bash
+# Clone the repository
 git clone https://github.com/DynamiX-Labs/SemiRestoreNet.git
 cd SemiRestoreNet
+
+# Install required dependencies
 pip install -r requirements.txt
 ```
 
-### Running Batch Inference
-The evaluation script accepts input and output directory paths via flags or positional arguments:
+---
+
+## 13. One-Command Inference
+
+Run batch inference on any input directory with a single command:
 
 ```bash
-# Standard single-pass GPU inference
+# Standard single-pass inference (80 FPS)
 python evaluate.py --input_dir <path_to_test_images> --output_dir <path_to_output_dir>
 
-# High-precision 8-Fold Geometric TTA mode
+# High-precision 8-Fold Geometric TTA inference (Maximum PSNR & Lowest CD Error)
 python evaluate.py --input_dir <path_to_test_images> --output_dir <path_to_output_dir> --use_tta
 ```
 
-*Supports input images in both NumPy (`.npy`) format and standard image formats (`.png`, `.jpg`, `.tif`). Outputs restored images matching original filenames.*
-
 ---
 
-## 8. Training Reproduction
+## 14. Training Reproduction
 
 To reproduce the complete 30-epoch training and fine-tuning sequence from scratch:
+
 ```bash
 python train_finetune_high_psnr.py --epochs 30 --batch_size 2 --accumulation_steps 8 --lr 5e-5
 ```
 
 ---
 
-## 9. Model Checkpoints and Outputs
+## 15. Reproducibility
 
-- **Final Trained Model Checkpoint**: Located at [`checkpoints/ensemble_model.pth`](checkpoints/ensemble_model.pth) (69.98 MB, Best + EMA Model-Soup).
-- **Restored Test Benchmark Outputs**: 400 restored test samples are pre-computed in [`submission_restored_outputs/`](submission_restored_outputs/).
+- **Random Seed Locking**: Deterministic seeds (`torch.manual_seed(42)`, `np.random.seed(42)`, `torch.cuda.manual_seed_all(42)`) are enforced across all training and evaluation scripts.
+- **Hardware Agnostic Execution**: Automatically selects CUDA GPU if available, falling back cleanly to CPU execution.
+- **Padding Invariance**: Input dimensions not divisible by 16 are automatically reflection-padded and unpadded without spatial shifts.
 
 ---
 
-## 10. Repository Structure
+## 16. Hardware and Performance
+
+Benchmarks measured on an entry-level **NVIDIA GeForce RTX 3050 Laptop GPU (4GB VRAM)** and **AMD Ryzen 7 7435HS CPU**:
 
 ```text
-SemiRestoreNet/
-├── model.py                     # SemiRestoreNet-v3 (23 RRDBs + 3 MDTA + 2D FFT + U-Pyramid)
-├── losses.py                    # Metrology Loss Stack (OHEM Charbonnier, SSIM, dNCC, CD Loss)
-├── dataset.py                   # Second-Order Semiconductor Physics Degradation Pipeline
-├── evaluate.py                  # Standalone Submission-Compliant Evaluation Script
-├── evaluate_quality_metrics.py  # 5-Task Quality Benchmark (PSNR, SSIM, LPIPS, CD Error)
-├── train_finetune_high_psnr.py  # 30-Epoch Training Script with Layer-Wise Learning Rates
-├── export_onnx.py               # ONNX Runtime Exporter and Latency Benchmark
-├── metrics.py                   # Metrology Validation Metrics (CD Edge Error, PSNR, SSIM)
-├── requirements.txt             # Complete Environment Dependencies
-├── checkpoints/
-│   └── ensemble_model.pth       # Final Submission Checkpoint (69.98 MB)
-├── submission_restored_outputs/ # 400 Restored Test Benchmark Outputs
-├── docs/images/                 # Scorecard Graphics and Visual Comparison Plots
-└── README.md                    # Technical Documentation
++---------------------------------------------------------------------------------------------------------------+
+|                                      Hardware Latency & Throughput Audit                                      |
++--------------------------+------------------------------+--------------------+----------------+---------------+
+| Inference Pipeline       | Hardware Platform            | Execution Mode     | Latency / Img  | Throughput    |
++--------------------------+------------------------------+--------------------+----------------+---------------+
+| Single-Pass PyTorch GPU  | NVIDIA RTX 3050 Laptop (4GB) | FP16 AMP (Batch 1) | 12.5 ms        | 80.0 FPS      |
+| 8-Fold Geometric TTA GPU | NVIDIA RTX 3050 Laptop (4GB) | FP16 AMP (8-pass)  | 1.455 s        | 0.68 FPS      |
+| ONNX Runtime CPU Engine  | AMD Ryzen 7 7435HS (8C/16T)  | FP32 (Opset 16)    | 2.470 s        | 0.40 FPS      |
++--------------------------+------------------------------+--------------------+----------------+---------------+
 ```
 
 ---
 
-## 11. License
+## 17. Limitations
+
+1. **Extreme Low Electron Dose (< 5 electrons/pixel)**: When electron beam dwell time is extremely constrained, quantum shot noise eliminates fundamental phase information. Features below the physical information-theoretic limit cannot be recovered without hallucination.
+2. **Throughput versus Precision Tradeoff**: Single-pass GPU inference runs at 80 FPS for inline screening, whereas 8-Fold TTA requires 1.45 s for offline certification.
+3. **Curvilinear Mask Geometry**: The Manhattan attention block is optimized for orthogonal Manhattan layouts (standard logic and memory); non-orthogonal EUV curvilinear masks require fine-tuning on curvilinear training data.
+
+---
+
+## 18. Future Updates: Addressing Current Limitations
+
+To resolve these limitations in future iterations:
+
+1. **Physics-Guided Diffusion Priors for Sub-5 Photon Regimes**: Implementing conditional diffusion bridges constrained by physical electron beam PSF kernel inversions to reconstruct structures under severe quantum starvation.
+2. **TensorRT INT8 Quantization**: Quantizing the 23-RRDB trunk into INT8 precision using calibration datasets to accelerate 8-Fold TTA execution from 1.45 s down to < 100 ms on edge fab GPUs.
+3. **Active Curvilinear Polygon Loss**: Formulating continuous contour curvature loss functions ($\kappa = \frac{|x' y'' - y' x''|}{(x'^2 + y'^2)^{3/2}}$) to directly preserve non-Manhattan curvilinear EUV mask geometries.
+
+---
+
+## License
 This project is licensed under the Apache 2.0 License — see the [LICENSE](LICENSE) file for details.
