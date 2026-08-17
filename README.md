@@ -1,85 +1,154 @@
-# SemiRestoreNet-v3: Physics-Aware Semiconductor Image Restoration & Metrology Super-Resolution
+# SemiRestoreNet-v3: Physics-Aware Semiconductor Image Restoration and Metrology Super-Resolution
 
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.6%2B_CUDA_12.4-ee4c2c.svg)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Hardware](https://img.shields.io/badge/Hardware-NVIDIA_RTX_|_A100_|_H100-green.svg)](https://developer.nvidia.com/cuda-zone)
 [![ONNX](https://img.shields.io/badge/Deployment-ONNX_Runtime_1.16+-005CED.svg)](https://onnxruntime.ai/)
 
-> **Project Documentation:** [Engineering Log & Defense Guide](EXPERIMENTS_AND_TRIALS.md) | [Mathematical Physics Derivations](CITATIONS.md) | [Apache 2.0 License](LICENSE)
+**Documentation Index:** [Engineering Log and Defense Guide](EXPERIMENTS_AND_TRIALS.md) | [Mathematical Physics Derivations](CITATIONS.md) | [Apache 2.0 License](LICENSE)
 
 ---
 
-## 1. The Core Engineering Problem
+## 1. Problem Statement and Semiconductor Physics Context
 
-In nanometer semiconductor inspection (Scanning Electron Microscopy — SEM), images suffer from extreme physical noise:
-- **Multiplicative electron backscatter speckle** (Gamma distributed).
-- **Quantum shot noise** from low electron beam doses (Poisson distributed).
-- **Electromagnetic lens astigmatism blur**.
-- **Electrostatic surface charging drift** on insulating dielectric layers.
+In nanometer semiconductor metrology (Scanning Electron Microscopy — SEM and Transmission Electron Microscopy — TEM), raw detector images exhibit severe physical degradations:
+- **Multiplicative electron backscatter speckle** governed by Gamma statistics ($y = x \cdot \eta$, $\eta \sim \text{Gamma}(L, 1/L)$).
+- **Quantum electron dose starvation (Poisson shot noise)** caused by low beam currents necessary to prevent wafer charging damage.
+- **Electromagnetic lens astigmatism blur** resulting from beam alignment drift.
+- **Electrostatic surface charging drift** over insulating dielectric layers producing low-frequency background gradients.
 
-### Why Standard Computer Vision Models Fail Here:
-Standard perceptual super-resolution models (ESRGAN, Stable Diffusion, GANs) optimize for human visual appeal. In semiconductor inspection, this produces **catastrophic feature hallucination**: the model invents crisp edges that shift transistor gate sidewalls by 1–2 nanometers. In a sub-2nm fabrication node, a 1 nm error can cause false yield alarms or mask critical short-circuit defects.
+### The Failure Mode of Standard Computer Vision Models
+Conventional deep learning super-resolution frameworks (such as ESRGAN, Diffusion, or GAN-based architectures) optimize for perceptual realism. In semiconductor process inspection, this produces **feature hallucination**: models synthesize high-frequency line edges that appear sharp but shift transistor gate boundaries and contact edges by 1 to 2 nanometers. At advanced sub-2nm nodes, a 1 nm placement error alters electrical parasitic capacitance, causing false yield alarms or masking critical bridge defects.
 
-**SemiRestoreNet-v3** is engineered to eliminate hallucination by anchoring restoration strictly in **semiconductor physical invariants, spatial frequency domain properties, and closed-loop metrology losses**.
+**SemiRestoreNet-v3** is engineered to eliminate hallucination by constraining restoration strictly within semiconductor physical invariants, 2D Fourier frequency domain harmonics, and closed-loop metrology objectives.
 
 ---
 
-## 2. The Engineering Journey: Problems Faced & How We Solved Them
+## 2. System Architecture: SemiRestoreNet-v3
 
-Training deep neural networks (17.43M parameters) on extreme physical semiconductor noise is rarely straightforward. Here is an honest breakdown of the exact technical roadblocks encountered and how we engineered solutions:
+SemiRestoreNet-v3 integrates domain-specific semiconductor physics into a deep residual restoration network (17.43 million parameters).
 
-### 🚧 Challenge 1: The Irrecoverable Noise Entropy Trap
-* **The Problem**: In our early training experiments, the degradation pipeline included extreme speckle noise levels ($L=2.0$). At $L=2$, the signal-to-noise ratio drops so low that high-frequency line edges are physically destroyed. The optimizer spent massive parameter capacity trying to "guess" destroyed pixels, causing gradients to oscillate and stalling overall PSNR at ~27.3 dB.
-* **The Engineering Fix**: We audited `dataset.py` and calibrated noise ranges to physically recoverable SEM tool limits ($L \in [5, 14]$). This focused network capacity on actual structural recovery rather than hallucination, resulting in an immediate **+1.2 dB** baseline gain.
+```mermaid
+flowchart TD
+    In["Raw Degraded SEM Image [B, 1, 128, 128]"]
+    
+    subgraph DUAL_STREAM ["1. Dual-Domain Homomorphic Stream & Noise Conditioning"]
+        In --> LinStream["Linear Stream: Conv 3x3, 64ch"]
+        In --> LogTrans["Signed Log Transform: y = sign(x) · ln(1 + |x| / 0.05)"]
+        In --> NoiseEst["Noise Estimator: High-Pass Residual Feats"]
+        LogTrans --> LogStream["Log Stream: Conv 3x3, 64ch"]
+        LinStream & LogStream & NoiseEst --> GFM["Gated Fusion Module (GFM)"]
+        NoiseEst --> FiLM["FiLM Noise Conditioner: (1 + γ)F + β"]
+        GFM & FiLM --> FusedFeat["Conditioned Features (64ch)"]
+    end
 
-### 🚧 Challenge 2: Half-Precision Complex Underflow in 2D FFT under AMP
-* **The Problem**: When upgrading to `SemiRestoreNet-v3`, we added a 2D Real Fast Fourier Transform (`rfft2` / `irfft2`) block to filter periodic FinFET gratings in frequency space $(u, v)$. However, PyTorch's Automatic Mixed Precision (`torch.amp.autocast`) converted complex frequency matrices to `ComplexHalf` (fp16), which is unsupported on CUDA for inverse FFTs and caused immediate NaN loss values.
-* **The Engineering Fix**: In `model.py`, we isolated `FocalFourierBlock` within `with torch.amp.autocast(device_type, enabled=False):` and explicitly cast FFT operations to `float32` with orthogonal normalization (`norm='ortho'`). This eliminated NaNs and stabilized gradients across the entire 30-epoch run.
+    subgraph DEEP_TRUNK ["2. Deep Trunk with Global MDTA & 2D FFT Harmonic Filtering"]
+        FusedFeat --> Stage1["Stage 1: 8x RRDB Blocks"]
+        Stage1 --> MDTA1["Restormer MDTA Block 1 (Global Transposed Attention)"]
+        Stage1 -.->|1/2x Downsample| PyramidBridge["Multi-Scale U-Pyramid Bridge (>256px Receptive Field)"]
+        MDTA1 --> Stage2["Stage 2: 8x RRDB Blocks"]
+        Stage2 --> MDTA2["Restormer MDTA Block 2"]
+        MDTA2 --> Stage3["Stage 3: 7x RRDB Blocks"]
+        Stage3 --> Fourier["FocalFourierBlock (2D Real FFT Spatial Frequency Filter)"]
+        Fourier --> Manhattan["Multi-Scale Manhattan Attention (1x7/7x1 and 1x15/15x1)"]
+        Manhattan --> ConvBody["Conv Body (3x3, 64ch)"]
+    end
 
-### 🚧 Challenge 3: Parameter Reset When Adding New Architectural Modules
-* **The Problem**: When integrating new blocks (Fourier filters, U-Pyramid skips, and dynamic prompt heads) onto our pretrained 23-RRDB backbone, random weight initialization in the new heads disrupted the existing feature representations, causing validation scores to drop at epoch 1.
-* **The Engineering Fix**: We applied **Zero-Initialization** (ControlNet style) to the new modules:
-  - `self.gamma` (Fourier residual scaling) initialized to `0.0`.
-  - `self.scale_factor` (Pyramid bridge scaling) initialized to `0.0`.
-  - Final linear weights in `self.prompt_generator` initialized to `0.0`.
+    subgraph HIGHWAY ["3. Multi-Scale Cross-Stage Highway"]
+        Stage1 -.-> HighwayFuse["Cross-Stage Highway Feature Fusion"]
+        Stage2 -.-> HighwayFuse
+        PyramidBridge -.-> HighwayFuse
+        ConvBody --> HighwayFuse
+    end
+
+    subgraph RESTORATION_HEAD ["4. Degradation-Prompted Restoration Head"]
+        HighwayFuse --> NativeRefiner["Native-Resolution Spatial Phase Refiner"]
+        NoiseEst -.-> PromptGen["Prompt Generator (Dynamic Channel Modulation)"]
+        PromptGen --> NativeRefiner
+        NativeRefiner --> SRHead["Sub-Pixel PixelShuffle Head (2x Expansion)"]
+        In -.->|Bicubic 2x Up| BaseResidual["Global Base Residual"]
+        SRHead & BaseResidual --> Out["Metrology-Preserved Restored Image [B, 1, 256, 256]"]
+    end
+```
+
+### Key Architectural Modules:
+
+1. **Signed Log-Domain Homomorphic Stream (`SignedLogTransform`)**:
+   Converts multiplicative speckle into an additive relation: $\ln(x \cdot \eta) = \ln x + \ln \eta$. Using $y = \text{sign}(x) \cdot \ln(1 + |x| / \epsilon)$ guarantees continuous gradients across negative detector electronic baseline offsets without numeric NaN exceptions.
+
+2. **Focal Fourier Frequency Attention (`FocalFourierBlock`)**:
+   Computes 2D Real Fast Fourier Transforms (`rfft2` / `irfft2`) to isolate repeating transistor pitch frequencies in $(u, v)$ spatial frequency space, separating periodic FinFET/SRAM array harmonics from broadband stochastic noise.
+
+3. **Multi-Scale Hierarchical U-Pyramid Bridge (`MultiScalePyramidBridge`)**:
+   Downsamples Stage-1 features to $1/2\times$ scale through strided depthwise-separable convolutions to capture macro-level electrostatic surface charging potential drift with an effective receptive field exceeding 256 pixels.
+
+4. **Multi-DConv Transposed Attention (`MDTA`)**:
+   Computes cross-covariance self-attention across channel dimensions with linear complexity $\mathcal{O}(HWC^2)$, establishing die-wide spatial context across unconstrained repeating pitches.
+
+5. **Multi-Scale Manhattan Anisotropic Attention**:
+   Applies orthogonal strip convolutions ($1\times 7, 7\times 1, 1\times 15, 15\times 1$) aligned with horizontal wordlines and vertical bitlines to preserve orthogonal semiconductor layout boundaries and prevent corner rounding.
+
+6. **Dynamic Degradation-Prompted Restoration Head (`DecoupledRestorationHead`)**:
+   Modulates restoration feature channels via prompt vectors derived from estimated noise maps, allowing the output stage to adapt between pure super-resolution and noise filtration.
+
+---
+
+## 3. Engineering Challenges Encountered and Solutions Implemented
+
+During the model development and training process across 30 epochs, several structural and numeric bottlenecks were identified and resolved:
+
+### Challenge 1: Irrecoverable Noise Range and Gradient Dissipation
+* **Observation**: Early synthetic degradation pipelines applied extreme speckle noise levels ($L=2.0$). Under $L=2.0$, high-frequency structural edges fall below the theoretical Shannon recovery limit. The optimizer allocated significant capacity attempting to reconstruct irrecoverable pixels, causing gradient oscillation and capping validation PSNR at ~27.3 dB.
+* **Resolution**: The degradation parameter space was recalibrated to realistic SEM tool operating boundaries ($L \in [5, 14]$). This shifted optimizer focus toward recoverable boundary transitions, resulting in an immediate +1.2 dB baseline gain.
+
+### Challenge 2: Half-Precision Complex Underflow in 2D FFT Under AMP
+* **Observation**: Enabling PyTorch Automatic Mixed Precision (`torch.amp.autocast`) during 2D FFT operations cast complex matrices to `ComplexHalf` (fp16). CUDA does not support native fp16 inverse FFT kernels, triggering immediate runtime exceptions and NaN loss propagation.
+* **Resolution**: The `FocalFourierBlock` was isolated under `with torch.amp.autocast(device_type, enabled=False):` with explicit `float32` tensor casting and orthogonal normalization (`norm='ortho'`), ensuring numeric stability throughout mixed-precision training.
+
+### Challenge 3: Feature Representation Disruption During Architectural Updates
+* **Observation**: Integrating the 2D FFT block, U-Pyramid bridge, and prompt head onto the pretrained 23-RRDB backbone initially degraded validation metrics at Epoch 1 due to random weight initialization in the newly added layers.
+* **Resolution**: Zero-Initialization was enforced across all new pathways:
+  - Fourier residual scaling parameter `gamma = 0.0`.
+  - Pyramid bridge scaling parameter `scale_factor = 0.0`.
+  - Prompt generator projection layer weights and biases initialized to `0.0`.
   
-  At step 0, the model mathematically produced the exact output of the trained checkpoint. We then applied **layer-wise learning rates** ($0.05\times$ for the 23-RRDB backbone, $3.0\times$ for the new Fourier/Pyramid modules), allowing the new layers to converge rapidly without disturbing pretrained weights.
+  This ensured that at step 0, the updated model produced outputs identical to the pretrained checkpoint. Decoupled layer-wise learning rates ($0.05\times$ on the backbone, $3.0\times$ on newly added modules) allowed new layers to train rapidly without disrupting existing feature weights.
 
-### 🚧 Challenge 4: Boundary Truncation Seams on Large Wafer Images
-* **The Problem**: Processing full-die SEM images with non-overlapping grids creates visible seam artifacts at tile edges due to convolution receptive field truncation.
-* **The Engineering Fix**: In `evaluate_quality_metrics.py` and `evaluate.py`, we implemented **Overlapping Tile Stitching with a 2D Hanning (Raised-Cosine) Window**. Overlapping tiles by 32 pixels and blending them with smooth cosine weights eliminated boundary seam artifacts and added **+0.25 dB** to full-image reconstructions.
+### Challenge 4: Tile Boundary Seam Discontinuities in Full-Image Inference
+* **Observation**: Segmenting large wafer images into standard grid tiles created edge seam artifacts due to spatial truncation of convolutional receptive fields.
+* **Resolution**: An overlapping tile inference engine with a 2D Hanning (Raised-Cosine) blending window was implemented. Overlapping tiles by 32 pixels with smooth cosine edge tapering completely eliminated border seam artifacts and improved full-image reconstruction PSNR by +0.25 dB.
 
 ---
 
-## 3. Official Quality Metrics Benchmark
+## 4. Quantitative Benchmark Performance
 
-All metrics evaluated across **50 benchmark test samples x 5 physical degradation tasks** using 8-Fold Geometric TTA and Overlapping Tile Stitching:
+Metrics evaluated across 50 held-out test images across all 5 standard degradation tasks using 8-Fold Geometric Test-Time Augmentation (TTA) and Overlapping Tile Stitching:
 
-![Official Hackathon Quality Metrics Scorecard](docs/images/hackathon_quality_metrics.png)
+![Official Quality Metrics Scorecard](docs/images/hackathon_quality_metrics.png)
 
 ```text
 ========================================================================================
              OFFICIAL QUALITY METRICS BENCHMARK (50 SAMPLES x 5 TASKS)
 ========================================================================================
-  1. Overall Average pSNR       : 30.01 dB       (Crossed the 30 dB Target!)
-  2. Overall Average SSIM       : 0.8173         (Substantial structural gain)
-  3. Perceptual LPIPS           : 0.2008         (Well below the 0.35 target)
-  4. Metrology CD Edge Error    : 0.2191 nm 🔥   (0.22 nm sub-atomic precision!)
+  1. Overall Average PSNR       : 30.01 dB       (Crossed the 30 dB Target)
+  2. Overall Average SSIM       : 0.8173         (Structural fidelity index)
+  3. Perceptual LPIPS           : 0.2008         (Below the 0.35 perceptual threshold)
+  4. Metrology CD Edge Error    : 0.2191 nm      (Sub-atomic line edge precision)
 ========================================================================================
 
   PER-DEGRADATION BREAKDOWN:
   --------------------------------------------------------------------------------------
-  • Pure 2x Super-Resolution    : 33.90 dB  (Peaks up to 34.84 dB) | SSIM 0.9123
-  • Pure Gaussian Denoising     : 29.98 dB                         | SSIM 0.8142
-  • Gaussian + 2x SR            : 29.62 dB                         | SSIM 0.8040
-  • Pure Speckle Denoising      : 28.45 dB                         | SSIM 0.7818
-  • Speckle + 2x SR             : 28.09 dB                         | SSIM 0.7740
+  - Pure 2x Super-Resolution    : 33.90 dB  (Peaks up to 34.84 dB) | SSIM 0.9123
+  - Pure Gaussian Denoising     : 29.98 dB                         | SSIM 0.8142
+  - Gaussian + 2x SR            : 29.62 dB                         | SSIM 0.8040
+  - Pure Speckle Denoising      : 28.45 dB                         | SSIM 0.7818
+  - Speckle + 2x SR             : 28.09 dB                         | SSIM 0.7740
 ========================================================================================
 ```
 
 ---
 
-## 4. Visual Inspection Previews
+## 5. Visual Inspection Comparisons
 
 | Sample A: High-Density Periodic Grating | Sample B: Transistor Sidewall Profile |
 |:---:|:---:|
@@ -87,63 +156,59 @@ All metrics evaluated across **50 benchmark test samples x 5 physical degradatio
 
 ---
 
-## 5. Realistic Engineering Limitations & What We Cannot Claim
+## 6. Engineering Bounds and Practical Limitations
 
-To maintain senior engineering rigor, we clearly state what the model **can and cannot do**:
-
-1. **Extreme Low Electron Dose (< 5 photons/pixel)**: When electron beam dwell time is too low, quantum phase information is destroyed. The network cannot reconstruct structures below the physical Shannon entropy limit without slight hallucination.
-2. **Throughput vs. Precision Tradeoff**:
-   - **Real-Time Inline Fab Mode** (Single-pass GPU inference): Runs at **~80 FPS (12.5 ms/image)** with ~29.0 dB PSNR.
-   - **High-Precision Metrology Mode** (8-Fold TTA + Overlapping Tile Stitching): Reaches **30.01 dB PSNR and 0.219 nm CD error**, but takes **~1.4 seconds per image**.
-3. **Out-of-Distribution Defects**: While the model excels on Manhattan layouts, non-orthogonal curvilinear lithography patterns (e.g. EUV curvilinear masks) require fine-tuning on curvilinear training sets.
+1. **Extreme Low Electron Dose (< 5 electrons/pixel)**: When electron beam dwell time is extremely constrained, quantum shot noise eliminates fundamental phase information. The network cannot reconstruct features below the physical information-theoretic limit without synthetic hallucination.
+2. **Throughput versus Precision Tradeoff**:
+   - **Inline Fab Inspection Mode** (Single-pass GPU inference): Runs at **80 FPS (12.5 ms/image)** with ~29.0 dB PSNR for high-speed wafer screening.
+   - **Offline Metrology Certification Mode** (8-Fold TTA + Overlapping Tile Stitching): Achieves **30.01 dB PSNR and 0.219 nm CD error** with ~1.4 s/image execution time.
+3. **Curvilinear Mask Patterns**: While optimized for orthogonal Manhattan layouts (standard logic and memory), non-orthogonal curvilinear EUV mask patterns require fine-tuning on curvilinear training data.
 
 ---
 
-## 6. How Reviewers Can Run Standalone Evaluation (Zero Setup Friction)
+## 7. Standalone Evaluation Protocol (`evaluate.py`)
 
-Our standalone evaluation script `evaluate.py` runs out-of-the-box without manual code edits.
+The standalone evaluation script `evaluate.py` is configured for automated execution without manual code modifications.
 
-### 6.1 Requirements & Environment Setup
+### Environment Setup
 ```bash
 git clone https://github.com/DynamiX-Labs/SemiRestoreNet.git
 cd SemiRestoreNet
 pip install -r requirements.txt
 ```
 
-### 6.2 Running Inference on Any Test Directory
-The script accepts `--input_dir` (or positional path) and `--output_dir` (or positional path):
+### Running Batch Inference
+The evaluation script accepts input and output directory paths via flags or positional arguments:
 
 ```bash
 # Standard single-pass GPU inference
 python evaluate.py --input_dir <path_to_test_images> --output_dir <path_to_output_dir>
 
-# High-precision 8-Fold Geometric TTA mode (for maximum PSNR and lowest CD error)
+# High-precision 8-Fold Geometric TTA mode
 python evaluate.py --input_dir <path_to_test_images> --output_dir <path_to_output_dir> --use_tta
 ```
 
-*Supports input images in both NumPy (`.npy`) format and standard image formats (`.png`, `.jpg`, `.tif`). Automatically outputs restored images matching the input filenames.*
+*Supports input images in both NumPy (`.npy`) format and standard image formats (`.png`, `.jpg`, `.tif`). Outputs restored images matching original filenames.*
 
 ---
 
-## 7. Training from Scratch
+## 8. Training Reproduction
 
-To reproduce the complete 30-epoch fine-tuning run:
+To reproduce the complete 30-epoch training and fine-tuning sequence from scratch:
 ```bash
 python train_finetune_high_psnr.py --epochs 30 --batch_size 2 --accumulation_steps 8 --lr 5e-5
 ```
 
 ---
 
-## 8. Dataset & Model Checkpoint Storage
+## 9. Model Checkpoints and Outputs
 
-- **Final Trained Model Checkpoint**: Saved directly in [`checkpoints/ensemble_model.pth`](checkpoints/ensemble_model.pth) (69.98 MB, Best + EMA Model Soup).
-- **Restored Test Outputs**: 400 restored test samples are pre-computed in [`submission_restored_outputs/`](submission_restored_outputs/).
-- **Raw Large Datasets**: To prevent repository bloat, multi-gigabyte raw training arrays (`train/train/GT/*.npy`) are hosted on Google Drive:
-  👉 **[Download Full Semiconductor Training Dataset (Google Drive)](https://drive.google.com/)** *(Extract to `./train/train/GT/`)*
+- **Final Trained Model Checkpoint**: Located at [`checkpoints/ensemble_model.pth`](checkpoints/ensemble_model.pth) (69.98 MB, Best + EMA Model-Soup).
+- **Restored Test Benchmark Outputs**: 400 restored test samples are pre-computed in [`submission_restored_outputs/`](submission_restored_outputs/).
 
 ---
 
-## 9. Repository Structure
+## 10. Repository Structure
 
 ```text
 SemiRestoreNet/
@@ -153,17 +218,17 @@ SemiRestoreNet/
 ├── evaluate.py                  # Standalone Submission-Compliant Evaluation Script
 ├── evaluate_quality_metrics.py  # 5-Task Quality Benchmark (PSNR, SSIM, LPIPS, CD Error)
 ├── train_finetune_high_psnr.py  # 30-Epoch Training Script with Layer-Wise Learning Rates
-├── export_onnx.py               # ONNX Runtime Exporter & Latency Benchmark
+├── export_onnx.py               # ONNX Runtime Exporter and Latency Benchmark
 ├── metrics.py                   # Metrology Validation Metrics (CD Edge Error, PSNR, SSIM)
 ├── requirements.txt             # Complete Environment Dependencies
 ├── checkpoints/
 │   └── ensemble_model.pth       # Final Submission Checkpoint (69.98 MB)
 ├── submission_restored_outputs/ # 400 Restored Test Benchmark Outputs
 ├── docs/images/                 # Scorecard Graphics and Visual Comparison Plots
-└── README.md                    # This File
+└── README.md                    # Technical Documentation
 ```
 
 ---
 
-## 10. License
+## 11. License
 This project is licensed under the Apache 2.0 License — see the [LICENSE](LICENSE) file for details.

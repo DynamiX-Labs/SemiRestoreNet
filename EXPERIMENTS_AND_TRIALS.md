@@ -27,7 +27,7 @@ Every architectural module was derived through systematic ablation experiments o
 | **7. + Decoupled Head + Metrology Loss** | 28.50 dB | 0.7420 | 0.340 nm | Separates native 1x spatial phase denoising from 2x sub-pixel PixelShuffle edge synthesis, while differentiable dNCC + CD loss penalizes placement errors. (+1.65 dB) |
 | **8. + 2D FFT Focal Fourier Block (v3)** | 29.35 dB | 0.7840 | 0.285 nm | Filters noise in 2D spatial frequency domain $(u, v)$ via real FFT, preserving periodic FinFET/SRAM grating harmonics. (+0.85 dB) |
 | **9. + Multi-Scale U-Pyramid Bridge (v3)** | 29.80 dB | 0.8010 | 0.250 nm | Adds downscaled $1/2\times$ encoder path providing $>256\text{ px}$ receptive field for macro electrostatic charging drift. (+0.45 dB) |
-| **10. + 8-Fold TTA & Cosine Tile Stitching** | **30.01 dB** | **0.8173** | **0.219 nm** 🔥 | 8-pass rotation/flip ensemble + Hanning cosine overlapping tile stitching canceling residual variance and boundary seams. (+0.21 dB) |
+| **10. + 8-Fold TTA & Cosine Tile Stitching** | **30.01 dB** | **0.8173** | **0.219 nm** | 8-pass rotation/flip ensemble + Hanning cosine overlapping tile stitching canceling residual variance and boundary seams. (+0.21 dB) |
 
 ---
 
