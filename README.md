@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Hardware](https://img.shields.io/badge/Hardware-NVIDIA_RTX_|_A100_|_H100-green.svg)](https://developer.nvidia.com/cuda-zone)
 [![ONNX](https://img.shields.io/badge/Deployment-ONNX_Runtime_1.16+-005CED.svg)](https://onnxruntime.ai/)
-[![Hackathon](https://img.shields.io/badge/Event-Semiconductor_Hackathon-orange.svg)](https://i4c.in/hackathon-2026/)
+[![Hackathon](https://img.shields.io/badge/SEMICON_Hackathon-orange.svg)](https://i4c.in/hackathon-2026/)
 [![Team](https://img.shields.io/badge/Team-TECH_AVERIX-blueviolet.svg)]()
 
 > **Engineered by Team TECH AVERIX for the Semiconductor Hackathon**
@@ -380,7 +380,7 @@ For detailed analysis of our engineering approach and physical justifications, p
 
 ## 20. Team TECH AVERIX
 
-This repository and model architecture were designed and engineered for the **Semiconductor Hackathon** by **Team TECH AVERIX**:
+This repository and model architecture were designed and engineered for the **SEMICON Hackathon** by **Team TECH AVERIX**:
 
 | Team Member | Engineering Role | Core Contributions |
 |:---|:---|:---|
