@@ -51,7 +51,7 @@ def compute_importance_map(
 # =============================================================================
 
 class CharbonnierWeightedLoss(nn.Module):
-    """Spatially-weighted Charbonnier loss with defect/edge-aware importance."""
+    """Spatially-weighted Charbonnier loss with defect/edge-aware importance and OHEM hard mining."""
     
     def __init__(
         self,
@@ -59,12 +59,14 @@ class CharbonnierWeightedLoss(nn.Module):
         edge_boost: float = 5.0,
         min_weight: float = 1.0,
         use_spatial_weight: bool = True,
+        ohem_ratio: float = 0.30,
     ):
         super().__init__()
         self.epsilon = epsilon
         self.edge_boost = edge_boost
         self.min_weight = min_weight
         self.use_spatial_weight = use_spatial_weight
+        self.ohem_ratio = ohem_ratio
     
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         diff = pred - target
@@ -75,7 +77,35 @@ class CharbonnierWeightedLoss(nn.Module):
                 weights = compute_importance_map(target, self.edge_boost, self.min_weight)
             loss = loss * weights
             
+        if self.ohem_ratio > 0.0:
+            flat = loss.flatten(1)
+            k = max(1, int(flat.shape[1] * self.ohem_ratio))
+            topk_loss, _ = torch.topk(flat, k=k, dim=1)
+            return 0.5 * torch.mean(loss) + 0.5 * torch.mean(topk_loss)
+            
         return torch.mean(loss)
+
+
+class LogDomainCharbonnierLoss(nn.Module):
+    """Charbonnier loss computed in signed-log domain for multiplicative speckle equalization.
+    
+    Speckle noise is multiplicative: bright regions have higher absolute error.
+    Computing loss in log-domain equalizes error across brightness levels,
+    preventing the optimizer from over-focusing on bright-region noise.
+    """
+    def __init__(self, epsilon: float = 1e-3, log_eps: float = 0.05):
+        super().__init__()
+        self.epsilon = epsilon
+        self.log_eps = log_eps
+    
+    def _signed_log(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.sign(x) * torch.log1p(torch.abs(x) / self.log_eps)
+    
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        pred_log = self._signed_log(pred)
+        target_log = self._signed_log(target)
+        diff = pred_log - target_log
+        return torch.mean(torch.sqrt(diff * diff + self.epsilon ** 2))
 
 
 # =============================================================================
@@ -259,22 +289,24 @@ class DifferentiableNCCLoss(nn.Module):
         self.eps = eps
         
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        b, c, h, w = pred.shape
+        pred_f = pred.float()
+        target_f = target.float()
+        b, c, h, w = pred_f.shape
         p = self.patch_size
         s = self.stride
         
         if h < p or w < p:
-            p_mean = pred.mean(dim=(-2, -1), keepdim=True)
-            t_mean = target.mean(dim=(-2, -1), keepdim=True)
-            p_diff = pred - p_mean
-            t_diff = target - t_mean
-            ncc = (p_diff * t_diff).sum(dim=(-2, -1)) / (
-                torch.sqrt((p_diff ** 2).sum(dim=(-2, -1)) * (t_diff ** 2).sum(dim=(-2, -1))) + self.eps
-            )
+            p_mean = pred_f.mean(dim=(-2, -1), keepdim=True)
+            t_mean = target_f.mean(dim=(-2, -1), keepdim=True)
+            p_diff = pred_f - p_mean
+            t_diff = target_f - t_mean
+            denom = torch.sqrt((p_diff ** 2).sum(dim=(-2, -1)) * (t_diff ** 2).sum(dim=(-2, -1)) + self.eps)
+            denom = torch.clamp(denom, min=1e-4)
+            ncc = (p_diff * t_diff).sum(dim=(-2, -1)) / denom
             return torch.mean(1.0 - ncc)
             
-        pred_patches = F.unfold(pred, kernel_size=p, stride=s)
-        tgt_patches = F.unfold(target, kernel_size=p, stride=s)
+        pred_patches = F.unfold(pred_f, kernel_size=p, stride=s)
+        tgt_patches = F.unfold(target_f, kernel_size=p, stride=s)
         
         p_mean = pred_patches.mean(dim=1, keepdim=True)
         t_mean = tgt_patches.mean(dim=1, keepdim=True)
@@ -284,6 +316,7 @@ class DifferentiableNCCLoss(nn.Module):
         
         numerator = (p_diff * t_diff).sum(dim=1)
         denominator = torch.sqrt((p_diff ** 2).sum(dim=1) * (t_diff ** 2).sum(dim=1) + self.eps)
+        denominator = torch.clamp(denominator, min=1e-4)
         
         ncc = numerator / denominator
         return torch.mean(1.0 - torch.clamp(ncc, min=-1.0, max=1.0))
@@ -329,6 +362,7 @@ class CombinedLoss(nn.Module):
         fft_cap: float = 2.0,
         enable_fft: bool = True,
         enable_metrology: bool = True,
+        ohem_ratio: float = 0.30,
     ):
         super().__init__()
         self.lambda_charb = lambda_charb
@@ -340,7 +374,8 @@ class CombinedLoss(nn.Module):
         self.enable_fft = enable_fft
         self.enable_metrology = enable_metrology
         
-        self.charb_loss = CharbonnierWeightedLoss(epsilon=1e-3, edge_boost=edge_boost)
+        self.charb_loss = CharbonnierWeightedLoss(epsilon=1e-3, edge_boost=edge_boost, ohem_ratio=ohem_ratio)
+        self.log_charb_loss = LogDomainCharbonnierLoss(epsilon=1e-3, log_eps=0.05)
         self.ssim_loss = SSIMLoss()
         self.edge_loss = EdgeLoss()
         self.fft_loss = WeightedFFTLoss(cap=fft_cap)
@@ -361,6 +396,7 @@ class CombinedLoss(nn.Module):
     ) -> dict:
         losses = {}
         losses['charb'] = self.charb_loss(pred, target)
+        losses['log_charb'] = self.log_charb_loss(pred, target)
         losses['ssim'] = self.ssim_loss(pred, target)
         losses['edge'] = self.edge_loss(pred, target)
         
@@ -399,6 +435,7 @@ class CombinedLoss(nn.Module):
             
         losses['total'] = (
             self.lambda_charb * losses['charb']
+            + 0.1 * losses['log_charb']  # Log-domain loss for speckle equalization
             + self.lambda_ssim * losses['ssim']
             + self.lambda_edge * losses['edge']
             + self.lambda_fft * losses['fft']

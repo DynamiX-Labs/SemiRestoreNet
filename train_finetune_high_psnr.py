@@ -223,8 +223,8 @@ def run_finetuning(
             head_attn_params.append(param)
             
     optimizer = torch.optim.AdamW([
-        {'params': backbone_params, 'lr': lr * 0.1, 'name': 'pretrained_trunk'},
-        {'params': head_attn_params, 'lr': lr * 2.5, 'name': 'mdta_and_heads'},  # 2.5x LR for new modules
+        {'params': backbone_params, 'lr': lr * 0.05, 'name': 'pretrained_trunk'},
+        {'params': head_attn_params, 'lr': lr * 3.0, 'name': 'fourier_pyramid_and_heads'},  # 3.0x LR for new modules
     ], weight_decay=1e-4)
     
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-7)

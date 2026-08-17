@@ -246,7 +246,7 @@ def apply_real_esrgan_sem_pipeline(image: np.ndarray) -> tuple[np.ndarray, dict]
     noise_roll = random.random()
     if noise_roll < 0.35:
         # Multiplicative speckle dominant
-        num_looks = random.uniform(1.0, 10.0)
+        num_looks = random.uniform(5.0, 10.0)  # Capped ≥5.0 — L<5 is irrecoverable
         degraded = add_speckle_noise(degraded, num_looks=num_looks)
         metadata['degradations'].append(f'speckle_L{num_looks:.1f}')
         metadata['noise_level'] = 1.0 / math.sqrt(num_looks)
@@ -260,9 +260,9 @@ def apply_real_esrgan_sem_pipeline(image: np.ndarray) -> tuple[np.ndarray, dict]
         metadata['noise_level'] = sigma
     else:
         # Full mixed noise: Speckle + Poisson + Gaussian
-        num_looks = random.uniform(2.0, 12.0)
+        num_looks = random.uniform(5.0, 14.0)  # Fixed: was 2.0-12.0 — L<5 is irrecoverable
         degraded = add_speckle_noise(degraded, num_looks=num_looks)
-        sigma = random.uniform(0.01, 0.10)
+        sigma = random.uniform(0.01, 0.08)  # Cap sigma — 0.10 is too heavy in mixed context
         degraded = add_gaussian_noise(degraded, sigma=sigma)
         metadata['degradations'].append(f'mixed_speckle_L{num_looks:.1f}_gauss{sigma:.3f}')
         metadata['noise_level'] = max(1.0 / math.sqrt(num_looks), sigma)
@@ -301,11 +301,11 @@ def apply_second_order_degradation(image: np.ndarray) -> tuple[np.ndarray, dict]
 
 DEGRADATION_TYPES = {
     'real_esrgan_sem': {
-        'prob': 0.18,
+        'prob': 0.10,  # Reduced from 0.18 — hardest case, was dominating
         'pipeline': ['real_esrgan'],
     },
     'real_esrgan_sem_2nd_order': {
-        'prob': 0.05,
+        'prob': 0.04,  # Reduced from 0.05
         'pipeline': ['real_esrgan_2nd'],
     },
     'pure_speckle': {
@@ -313,11 +313,11 @@ DEGRADATION_TYPES = {
         'pipeline': ['speckle'],
     },
     'pure_gaussian': {
-        'prob': 0.14,
+        'prob': 0.18,  # Increased from 0.14 — model already near 30 dB here
         'pipeline': ['gaussian'],
     },
     'pure_downsample': {
-        'prob': 0.12,
+        'prob': 0.18,  # Increased from 0.12 — model already 32+ dB here
         'pipeline': ['downsample'],
     },
     'speckle_downsample': {
@@ -325,11 +325,11 @@ DEGRADATION_TYPES = {
         'pipeline': ['speckle', 'downsample'],
     },
     'gaussian_downsample': {
-        'prob': 0.10,
+        'prob': 0.14,  # Increased from 0.10
         'pipeline': ['gaussian', 'downsample'],
     },
     'all_combined': {
-        'prob': 0.05,
+        'prob': 0.10,  # Increased from 0.05 — helps generalization
         'pipeline': ['speckle', 'gaussian', 'downsample'],
     },
 }
@@ -371,7 +371,7 @@ def apply_degradation_pipeline(
     
     for step in pipeline:
         if step == 'speckle':
-            num_looks = random.uniform(1.0, 10.0)
+            num_looks = random.uniform(5.0, 12.0)  # Capped ≥5.0 — L<5 is near-irrecoverable
             degraded = add_speckle_noise(degraded, num_looks=num_looks)
             metadata['degradations'].append(f'speckle_L{num_looks:.1f}')
             metadata['noise_level'] = max(metadata['noise_level'], 1.0 / math.sqrt(num_looks))

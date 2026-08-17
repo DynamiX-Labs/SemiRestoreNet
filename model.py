@@ -636,26 +636,128 @@ CBAM = MultiScaleManhattanAttention
 
 
 # =============================================================================
-# Decoupled Two-Stage Restoration & Super-Resolution Head
+# Focal Fourier Frequency Attention Block (FFAB) - 2D FFT Harmonic Filtering
+# =============================================================================
+
+class FocalFourierBlock(nn.Module):
+    """Focal Fourier Frequency Attention Block for periodic semiconductor grating restoration.
+    
+    Operates directly on 2D spatial frequency domain (u, v) using real FFT (rfft2).
+    Concentrates periodic semiconductor features (SRAM bitcells, FinFET gratings, wordlines)
+    into distinct Fourier harmonics, isolating them from distributed stochastic speckle noise.
+    """
+    def __init__(self, num_feat: int = 64):
+        super().__init__()
+        self.conv_freq = nn.Sequential(
+            nn.Conv2d(num_feat * 2, num_feat * 2, kernel_size=1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(num_feat * 2, num_feat * 2, kernel_size=1, bias=False),
+        )
+        self.gamma = nn.Parameter(torch.tensor(0.0))  # Zero-init for identity initialization
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h, w = x.shape[2], x.shape[3]
+        orig_dtype = x.dtype
+        device_type = 'cuda' if x.is_cuda else 'cpu'
+        
+        # Enforce float32 precision for FFT operations to prevent half-precision complex underflow
+        with torch.amp.autocast(device_type, enabled=False):
+            x_f = x.float()
+            fft = torch.fft.rfft2(x_f, norm='ortho')
+            fft_cat = torch.cat([fft.real, fft.imag], dim=1)
+            
+            freq_feat = self.conv_freq(fft_cat)
+            real, imag = freq_feat.chunk(2, dim=1)
+            
+            complex_freq = torch.complex(real, imag)
+            spatial_out = torch.fft.irfft2(complex_freq, s=(h, w), norm='ortho')
+            
+        return x + (self.gamma * spatial_out).to(orig_dtype)
+
+
+# =============================================================================
+# Multi-Scale Hierarchical U-Pyramid Context Bridge
+# =============================================================================
+
+class MultiScalePyramidBridge(nn.Module):
+    """Multi-Scale Hierarchical U-Pyramid Bridge.
+    
+    Provides large receptive-field context (>256 px) by processing downsampled (1/2x)
+    features alongside the native 1x resolution trunk, capturing macro wafer charging drift.
+    """
+    def __init__(self, num_feat: int = 64):
+        super().__init__()
+        self.down = nn.Sequential(
+            nn.Conv2d(num_feat, num_feat, kernel_size=3, stride=2, padding=1, groups=num_feat, bias=False),
+            nn.Conv2d(num_feat, num_feat, kernel_size=1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+        self.bottleneck = nn.Sequential(
+            nn.Conv2d(num_feat, num_feat, kernel_size=3, padding=1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(num_feat, num_feat, kernel_size=3, padding=1, bias=False),
+        )
+        self.up = nn.Sequential(
+            nn.Conv2d(num_feat, num_feat * 4, kernel_size=3, padding=1, bias=False),
+            nn.PixelShuffle(2),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+        self.scale_factor = nn.Parameter(torch.tensor(0.0))  # Zero-init for identity initialization
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h, w = x.shape[2], x.shape[3]
+        pad_h = h % 2
+        pad_w = w % 2
+        if pad_h > 0 or pad_w > 0:
+            x_pad = F.pad(x, (0, pad_w, 0, pad_h), mode='replicate')
+        else:
+            x_pad = x
+            
+        low_res = self.down(x_pad)
+        macro_feat = self.bottleneck(low_res) + low_res
+        up_feat = self.up(macro_feat)
+        
+        if pad_h > 0 or pad_w > 0:
+            up_feat = up_feat[:, :, :h, :w]
+            
+        return self.scale_factor * up_feat
+
+
+# =============================================================================
+# Decoupled Two-Stage Restoration & Super-Resolution Head with Prompt Modulation
 # =============================================================================
 
 class DecoupledRestorationHead(nn.Module):
-    """Decoupled Two-Stage Restoration Head supporting 1x same-res and 2x super-resolution.
+    """Decoupled Two-Stage Restoration Head supporting 1x same-res and 2x super-resolution
+    with optional dynamic degradation prompt conditioning.
     
     Stage 1: Native-resolution (1x) structural feature denoising and spatial phase alignment.
     Stage 2: High-precision sub-pixel (2x) PixelShuffle edge synthesis.
     """
-    def __init__(self, num_feat: int = 64, out_channels: int = 1, upscale_factor: int = 1):
+    def __init__(self, num_feat: int = 64, out_channels: int = 1, upscale_factor: int = 1, prompt_dim: int = 16):
         super().__init__()
         self.upscale_factor = upscale_factor
         
-        # Stage 1: Native resolution refiner
+        # Dynamic Prompt Vector Generator (Zero-initialized for smooth transition)
+        self.prompt_generator = nn.Sequential(
+            nn.Linear(prompt_dim, num_feat),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(num_feat, num_feat * 2),
+        )
+        nn.init.zeros_(self.prompt_generator[2].weight)
+        nn.init.zeros_(self.prompt_generator[2].bias)
+        
+        # Stage 1: Native resolution refiner (expanded 4-conv + SE attention)
         self.native_refiner = nn.Sequential(
             nn.Conv2d(num_feat, num_feat, 3, 1, 1),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Conv2d(num_feat, num_feat, 3, 1, 1),
             nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(num_feat, num_feat, 3, 1, 1),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(num_feat, num_feat, 3, 1, 1),
         )
+        self.refiner_ca = ChannelAttention(num_feat, ratio=8)
         
         # Stage 2: Super-Resolution / Output Projection
         if upscale_factor == 2:
@@ -674,8 +776,22 @@ class DecoupledRestorationHead(nn.Module):
                 nn.Conv2d(num_feat, out_channels, 3, 1, 1),
             )
             
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, prompt_feat: torch.Tensor = None) -> torch.Tensor:
         x_refined = self.native_refiner(x) + x
+        x_refined = self.refiner_ca(x_refined) * x_refined
+        
+        # Dynamic prompt conditioning if provided
+        if prompt_feat is not None:
+            if prompt_feat.dim() == 4:
+                p_vec = F.adaptive_avg_pool2d(prompt_feat, 1).flatten(1)
+            else:
+                p_vec = prompt_feat.flatten(1)
+            scale_shift = self.prompt_generator(p_vec)
+            gamma, beta = scale_shift.chunk(2, dim=-1)
+            gamma = gamma.unsqueeze(-1).unsqueeze(-1)
+            beta = beta.unsqueeze(-1).unsqueeze(-1)
+            x_refined = x_refined * (1.0 + gamma) + beta
+            
         return self.sr_head(x_refined)
 
 
@@ -684,7 +800,7 @@ RestorationHead = DecoupledRestorationHead
 
 
 # =============================================================================
-# Full Model: SemiRestoreNet (23 RRDB / RepBlock + MDTA/Swin + Manhattan Attention)
+# Full Model: SemiRestoreNet-v3 (23 RRDB + 3 MDTA + 2D FFT Fourier + U-Pyramid)
 # =============================================================================
 
 class FullModel(nn.Module):
@@ -731,7 +847,6 @@ class FullModel(nn.Module):
             self.log_transform = SignedLogTransform(epsilon=0.05)
             self.conv_log = nn.Conv2d(in_channels, num_feat, 3, 1, 1)
             self.fusion = NoiseConditionedGFM(num_feat=num_feat, noise_feat=16)
-            # FiLM noise conditioner: predicts noise level + modulates trunk features
             self.film_conditioner = FiLMNoiseConditioner(noise_feat=16, num_feat=num_feat)
         
         # 2. Stage 1: Dense Convolutions / RepBlocks (Low-level edge features)
@@ -777,8 +892,20 @@ class FullModel(nn.Module):
                 RRDB(num_feat, num_grow_ch) for _ in range(num_rrdb_blocks[2])
             ])
         
+        # 6b. Attention Block 3 (Post-Stage 3 global speckle-structure refinement)
+        if self.attention_type == 'mdta':
+            self.attn3 = RestormerBlock(dim=num_feat, num_heads=4, drop_path_rate=drop_path_rate)
+        else:
+            self.attn3 = SwinTransformerBlock(dim=num_feat, num_heads=4, window_size=window_size, drop_path_rate=drop_path_rate)
+        
+        # 6c. Focal Fourier 2D FFT Frequency Harmonic Filter (SemiRestoreNet-v3)
+        self.fourier_block = FocalFourierBlock(num_feat=num_feat)
+        
         # 7. Multi-Scale Manhattan Anisotropic Defect Attention
         self.cbam = MultiScaleManhattanAttention(num_feat)
+        
+        # 7b. Multi-Scale Hierarchical U-Pyramid Context Bridge (SemiRestoreNet-v3)
+        self.pyramid_bridge = MultiScalePyramidBridge(num_feat=num_feat)
         
         # 8. Trunk Convolution
         self.conv_body = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
@@ -789,23 +916,20 @@ class FullModel(nn.Module):
         self.gamma1 = nn.Parameter(torch.tensor(0.1))
         self.gamma2 = nn.Parameter(torch.tensor(0.1))
         
-        # 9. Decoupled Two-Stage Reconstruction Head
+        # 9. Degradation-Prompted Two-Stage Reconstruction Head
         self.restoration_head = DecoupledRestorationHead(
-            num_feat=num_feat, out_channels=1, upscale_factor=upscale_factor
+            num_feat=num_feat, out_channels=1, upscale_factor=upscale_factor, prompt_dim=16
         )
 
     @property
     def swin1(self):
-        """Backward compatibility alias for attention stage 1."""
         return self.attn1
 
     @property
     def swin2(self):
-        """Backward compatibility alias for attention stage 2."""
         return self.attn2
 
     def switch_to_deploy(self):
-        """Collapses all RepBlocks in the model for zero-latency deployment."""
         for m in self.modules():
             if isinstance(m, RepBlock):
                 m.switch_to_deploy()
@@ -818,22 +942,12 @@ class FullModel(nn.Module):
         use_mc_dropout: bool = False,
         **kwargs,
     ):
-        """
-        Args:
-            x: Input degraded image [B, 1, H, W] (Float32, unclipped).
-            return_dict: If True, returns dict with 'restored'; else tensor.
-            return_uncertainty: Compatibility flag for uncertainty analysis.
-            use_mc_dropout: Compatibility flag for MC-dropout sampling.
-            
-        Returns:
-            Dict or Tensor of restored image [B, 1, s*H, s*W].
-        """
         feat_lin = self.conv_first(x)
         noise_level_pred = None
+        noise_feats = None
         if self.use_log_domain:
             feat_log = self.conv_log(self.log_transform(x))
             feat_first = self.fusion(feat_lin, feat_log, raw_input=x)
-            # FiLM: predict noise level and modulate fused features
             noise_feats = self.fusion.noise_estimator(x)
             feat_first, noise_level_pred = self.film_conditioner(noise_feats, feat_first)
         else:
@@ -869,10 +983,17 @@ class FullModel(nn.Module):
                 feat = torch.utils.checkpoint.checkpoint(block, feat, use_reentrant=False)
             else:
                 feat = block(feat)
+        
+        # Attention 3 (MDTA post-Stage 3)
+        feat = self.attn3(feat)
+        
+        # 2D FFT Focal Fourier Frequency Filter
+        feat = self.fourier_block(feat)
             
-        # Defect Attention + Global Trunk Residual Skip
+        # Defect Attention + Multi-Scale Macro Pyramid Skip
         feat = self.cbam(feat)
-        feat_trunk = self.conv_body(feat) + feat_first
+        feat_macro = self.pyramid_bridge(feat_stage1)
+        feat_trunk = self.conv_body(feat) + feat_first + feat_macro
         
         # Cross-Stage Dense Highway Injection
         feat_head_in = (
@@ -881,8 +1002,8 @@ class FullModel(nn.Module):
             + self.gamma2 * self.highway_proj2(feat_stage2)
         )
         
-        # High-frequency residual from Decoupled Head
-        residual = self.restoration_head(feat_head_in)
+        # Prompt-Conditioned Dynamic Decoupled Head
+        residual = self.restoration_head(feat_head_in, prompt_feat=noise_feats)
         
         # Global base image skip connection: y_hat = Up(x) + Delta_x
         if self.upscale_factor > 1:

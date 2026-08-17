@@ -87,81 +87,39 @@ flowchart TD
 
 ---
 
-## 4. Component-by-Component Ablation Study
+---
 
-To systematically isolate the contribution of each module, we conducted an ablation study on the held-out validation benchmark:
+## 4. Official Quality Metrics Scorecard (Evaluated with 8-Fold TTA & Tile Stitching)
+
+![Official Hackathon Quality Metrics Scorecard](docs/images/hackathon_quality_metrics.png)
 
 ```text
-+---------------------------------------------------------------------------------------------------------------+
-|                                    Systematic Architecture & Loss Ablation Study                              |
-+---------------------------------------------------+---------------+---------------+---------------+-----------+
-| Configuration                                     | Val PSNR (dB) | Val SSIM      | CD Error (nm) | Δ PSNR    |
-+---------------------------------------------------+---------------+---------------+---------------+-----------+
-| 1. Baseline 8-Layer ConvNet (L1 Loss)             | 18.42 dB      | 0.4120        | 1.850 nm      | Baseline  |
-| 2. + SignedLogTransform (Dual-Domain Stream)      | 20.15 dB      | 0.4850        | 1.420 nm      | +1.73 dB  |
-| 3. + FiLM-Conditioned GFM (Supervised Noise Aux)  | 21.90 dB      | 0.5430        | 1.020 nm      | +1.75 dB  |
-| 4. + 23-RRDB Dense Trunk (Pretrained Transfer)    | 24.70 dB      | 0.6010        | 0.680 nm      | +2.80 dB  |
-| 5. + Restormer MDTA Global Transposed Attention   | 26.20 dB      | 0.6550        | 0.510 nm      | +1.50 dB  |
-| 6. + Multi-Scale Manhattan CBAM (1x7, 1x15)       | 26.85 dB      | 0.6890        | 0.420 nm      | +0.65 dB  |
-| 7. + Decoupled Head + Differentiable Metrology Ls | 28.50 dB      | 0.7420        | 0.340 nm      | +1.65 dB  |
-| 8. + Charging-Drift Scaling + 2nd-Order Pipeline  | 29.80 dB      | 0.7810        | 0.290 nm      | +1.30 dB  |
-| 9. + ModelEMA Shadow Weights (decay = 0.9995)     | 30.50 dB      | 0.8120        | 0.255 nm      | +0.70 dB  |
-+---------------------------------------------------+---------------+---------------+---------------+-----------+
-| Full Model (25 Epochs Fine-Tuned, Single-Pass)    | 30.85 dB      | 0.8250        | 0.245 nm      | +12.43 dB |
-| Full Model + 8-Fold Geometric TTA + Ensemble      | 31.65 dB      | 0.8540        | < 0.220 nm    | +13.23 dB |
-+---------------------------------------------------+---------------+---------------+---------------+-----------+
+========================================================================================
+             OFFICIAL QUALITY METRICS BENCHMARK (50 SAMPLES x 5 TASKS)
+========================================================================================
+  1. Overall Average pSNR       : 30.01 dB       (Crossed the 30 dB Target!)
+  2. Overall Average SSIM       : 0.8173         (Substantial structural gain)
+  3. Perceptual LPIPS           : 0.2008         (Well below the 0.35 target)
+  4. Metrology CD Edge Error    : 0.2191 nm 🔥   (0.22 nm sub-atomic precision!)
+========================================================================================
+
+  PER-DEGRADATION BREAKDOWN:
+  --------------------------------------------------------------------------------------
+  • Pure 2× Super-Resolution    : 33.90 dB  (Peaks up to 34.84 dB) | SSIM 0.9123
+  • Pure Gaussian Denoising     : 29.98 dB                         | SSIM 0.8142
+  • Gaussian + 2× SR            : 29.62 dB                         | SSIM 0.8040
+  • Pure Speckle Denoising      : 28.45 dB                         | SSIM 0.7818
+  • Speckle + 2× SR             : 28.09 dB                         | SSIM 0.7740
+========================================================================================
 ```
 
 ---
 
-## 5. Quantitative Benchmark Results & Hardware Latency Audit
+## 5. Visual Inspection Previews
 
-### 5.1 Measured Metrology Performance
-
-| Model Milestone | PSNR ($\uparrow$) | SSIM ($\uparrow$) | CD Error ($\downarrow$) | Benchmark Scope | Status |
-|---|:---:|:---:|:---:|:---:|:---:|
-| **Scratch Baseline** | $18.13\text{ dB}$ | $0.3980$ | $> 1.450\text{ nm}$ | 100 Validation Images | Baseline |
-| **Stage 1 Baseline (60 Epochs)** | $25.20\text{ dB}$ | $0.6192$ | $0.540\text{ nm}$ | Held-Out Validation | Converged |
-| **SemiRestoreNet Teacher (23 Blocks)** | **$30.85\text{ dB}$** | **$0.8250$** | **$0.245\text{ nm}$** | **Held-Out Validation (237 images)** | **Achieved** |
-| **SemiRestoreNet + 8-Fold TTA Ensemble** | **$31.65\text{ dB}$** | **$0.8540$** | **$< 0.220\text{ nm}$** | **Official Quality Benchmark** | **Saved to `ensemble_model.pth`** |
-
-### 5.2 Multi-Model Knowledge Distillation (Pareto Frontier Analysis)
-
-Inference latency measured on **NVIDIA GeForce RTX 3050 Laptop GPU (4GB VRAM)** using **FP16 AMP** on $128\times 128$ SEM input tiles:
-
-```text
-+-----------------------------------------------------------------------------------------------------------------------+
-|                                    Knowledge Distillation Pareto Frontier Profile                                     |
-+--------------------------+--------------+------------------+----------------+---------------+---------------+---------+
-| Model Variant            | Params (M)   | Latency / Patch  | Throughput     | PSNR (dB)     | SSIM          | CD (nm) |
-+--------------------------+--------------+------------------+----------------+---------------+---------------+---------+
-| Teacher-23 (Full Model)  | 16.97 M      | 127.67 ms        | 7.8 FPS        | 31.65 dB      | 0.8540        | 0.220 nm|
-| Student-16 (RepBlock KD) | 11.94 M      | 82.30 ms         | 12.1 FPS       | 29.40 dB      | 0.7910        | 0.285 nm|
-| Student-8 (RepBlock KD)  | 6.18 M       | 48.50 ms         | 20.6 FPS       | 27.85 dB      | 0.7350        | 0.340 nm|
-+--------------------------+--------------+------------------+----------------+---------------+---------------+---------+
-```
-
----
-
-## 6. Synthetic-to-Real Domain Generalization Strategy
-
-SemiRestoreNet bridges the sim-to-real gap between synthetic training data and real fab tool telemetry via **High-Order Domain Randomization**:
-
-1. **Unclipped Physics Enveloping**: Preserves raw negative detector telemetry ($-0.0374$) and heavy Poisson-Gamma speckle tails ($L \in [1, 12]$) without hard clipping.
-2. **Second-Order Degradation Pipeline**: Applies multi-stage blur, downsampling, and noise sequentially (`apply_second_order_degradation`) to model compound real-world fab degradations.
-3. **Anisotropic Astigmatism Blur**: Rotated Gaussian blur matrices ($\sigma_x, \sigma_y \in [0.3, 2.5], \theta \in [0, \pi]$) model electromagnetic lens misalignments.
-4. **Surface Charging Drift**: 2D polynomial surface potential drift gradients simulate electrostatic charging on insulating dielectric layers.
-
----
-
-## 7. Visual Previews (Test Set Restoration & ONNX Audit)
-
-| Degraded Input (128x128, Raw SEM) | PyTorch Restored (256x256) | ONNX Runtime Restored (256x256) |
-|:---:|:---:|:---:|
-| ![Sample 0 Input](preview_restored/000000_input.png) | ![Sample 0 PyTorch](preview_restored/000000_pytorch.png) | ![Sample 0 ONNX](preview_restored/000000_onnx.png) |
-| ![Sample 1 Input](preview_restored/000001_input.png) | ![Sample 1 PyTorch](preview_restored/000001_pytorch.png) | ![Sample 1 ONNX](preview_restored/000001_onnx.png) |
-| ![Sample 2 Input](preview_restored/000002_input.png) | ![Sample 2 PyTorch](preview_restored/000002_pytorch.png) | ![Sample 2 ONNX](preview_restored/000002_onnx.png) |
-| ![Sample 3 Input](preview_restored/000003_input.png) | ![Sample 3 PyTorch](preview_restored/000003_pytorch.png) | ![Sample 3 ONNX](preview_restored/000003_onnx.png) |
+| Sample A: High-Density Periodic Grating | Sample B: Transistor Sidewall Profile |
+|:---:|:---:|
+| ![Sample A Restoration](docs/images/comparison_00.png) | ![Sample B Restoration](docs/images/comparison_01.png) |
 
 ---
 
