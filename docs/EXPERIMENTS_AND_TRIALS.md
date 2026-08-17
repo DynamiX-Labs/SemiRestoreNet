@@ -98,15 +98,15 @@ Determining the exact scalar bounds for the compound loss function was critical.
 
 ## 6. Technical FAQ
 
-#### Q1: "Why do you emphasize Critical Dimension (CD) error over pure PSNR?"
-> *"In semiconductor metrology, a restored image can achieve a misleadingly high PSNR by slightly blurring or shifting a transistor line by 1 nm, which smooths out pixel variance. However, a 1 nm line shift causes false defect detection or masks real micro-bridging faults. Our architecture is explicitly engineered around Metrology Preservation, optimizing for sub-0.22 nm edge placement fidelity."*
+#### Q1: Why focus on Critical Dimension (CD) error instead of just PSNR?
+Because in semiconductor manufacturing, getting the line width exactly right is more important than looking pretty. A model can get a great PSNR score while shifting a transistor line by 1 nm, but that 1 nm shift could trigger a false defect alarm in the fab. We built this network to make sure edge placement is accurate down to sub-nanometer levels.
 
-#### Q2: "How do you defend your claims against feature hallucination?"
-> *"We do not use unconstrained generative models (GANs or Diffusion). Instead, we enforce a Hallucination-Constrained Metrology Loss Stack: the restoration is constrained by a Degradation Consistency loss that requires the low-frequency downprojected reconstruction to match the raw SEM detector telemetry, preventing the invention of unsupported nanoscale features."*
+#### Q2: How do you prevent the model from hallucinating fake details?
+We avoided using GANs or Diffusion models, which are notorious for making things up. Instead, we use standard regression losses tied to the original image data. Our losses force the final high-res output to mathematically match the raw, low-res SEM image when downscaled, so the network can't invent details that weren't physically captured by the electron beam.
 
-#### Q3: "How does your model bridge the Synthetic-to-Real domain gap?"
-> *"We employ physics-informed High-Order Domain Randomization with second-order degradation pipelines. Rather than training on generic Gaussian noise, our pipeline models the exact physical noise regime of electron microscopes: unclipped Gamma speckle (5-14 looks), Poisson electron dose statistics (10-150 electrons), anisotropic electromagnetic lens astigmatism blur (0.3-2.5 px), and 2D surface charging drift gradients. When tested on real fab benchmark images, the network generalizes cleanly without retraining."*
+#### Q3: How does the model handle real-world fab images when trained on synthetic data?
+We matched our training noise exactly to the physics of electron microscopes. Instead of generic blur, we simulate real Gamma speckle, Poisson electron dose noise, lens astigmatism, and surface charging. Because the training data looks exactly like real SEM physics, the model works right out of the box on real fab images without needing to be retrained.
 
-#### Q4: "Why does 8-Fold TTA take 1.45s compared to 12.5ms for single-pass?"
-> *"Single-pass inference on GPU runs at 80 FPS (12.5 ms), which is ideal for real-time inline fab tool inspection. 8-Fold TTA performs 8 independent spatial rotations and flips with tensor re-alignment, providing an additional +1.15 dB PSNR gain and noise cancellation for offline high-precision metrology certification where maximum accuracy is required."*
+#### Q4: Why is 8-Fold TTA so much slower (1.45s) than the single-pass (12.5ms)?
+Single-pass runs very fast (80 FPS) and is great for real-time wafer inspection. 8-Fold TTA is slower because it actually runs the image through the network 8 separate times (using different rotations and flips) and averages the results. We use TTA for offline, high-precision analysis where we need that extra +1.15 dB PSNR boost and don't care about real-time speed.
 
