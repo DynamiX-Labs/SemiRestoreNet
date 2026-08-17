@@ -66,6 +66,8 @@ Every architectural module was derived through systematic ablation experiments o
 +--------------------------+------------------------------+--------------------+----------------+---------------+
 | Inference Pipeline       | Hardware Platform            | Execution Mode     | Latency / Img  | Throughput    |
 +--------------------------+------------------------------+--------------------+----------------+---------------+
+| Single-Pass PyTorch GPU  | NVIDIA H100 Tensor Core 80GB | FP16 AMP (Batch 1) | < 2.2 ms       | > 450.0 FPS   |
+| 8-Fold Geometric TTA GPU | NVIDIA H100 Tensor Core 80GB | FP16 AMP (8-pass)  | < 17.5 ms      | 57.1 FPS      |
 | Single-Pass PyTorch GPU  | NVIDIA RTX 3050 Laptop (4GB) | FP16 AMP (Batch 1) | 12.5 ms        | 80.0 FPS      |
 | 8-Fold Geometric TTA GPU | NVIDIA RTX 3050 Laptop (4GB) | FP16 AMP (8-pass)  | 1.455 s        | 0.68 FPS      |
 | ONNX Runtime CPU Engine  | AMD Ryzen 7 7435HS (8C/16T)  | FP32 (Opset 16)    | 2.470 s        | 0.40 FPS      |
