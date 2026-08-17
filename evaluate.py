@@ -33,7 +33,16 @@ from tqdm import tqdm
 # =============================================================================
 
 SUPPORTED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.npy'}
-DEFAULT_CHECKPOINT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'checkpoints', 'best_model.pth')
+
+def get_default_checkpoint():
+    base = os.path.dirname(os.path.abspath(__file__))
+    for name in ['ensemble_model.pth', 'best_finetuned_model.pth', 'best_model.pth']:
+        p = os.path.join(base, 'checkpoints', name)
+        if os.path.isfile(p):
+            return p
+    return os.path.join(base, 'checkpoints', 'ensemble_model.pth')
+
+DEFAULT_CHECKPOINT = get_default_checkpoint()
 
 
 # =============================================================================
@@ -134,12 +143,16 @@ def load_model(checkpoint_path: str, device: torch.device):
     else:
         state_dict = checkpoint
 
-    upscale_factor = 1
+    upscale_factor = 2
     if isinstance(checkpoint, dict) and 'config' in checkpoint and 'upscale_factor' in checkpoint['config']:
         upscale_factor = checkpoint['config']['upscale_factor']
-    elif isinstance(state_dict, dict) and 'restoration_head.head.0.weight' in state_dict:
-        if state_dict['restoration_head.head.0.weight'].shape[0] == 256:
-            upscale_factor = 2
+    elif isinstance(state_dict, dict):
+        for k in ['restoration_head.sr_head.0.weight', 'restoration_head.head.0.weight']:
+            if k in state_dict:
+                if state_dict[k].shape[0] == 64:
+                    upscale_factor = 1
+                elif state_dict[k].shape[0] == 256:
+                    upscale_factor = 2
             
     try:
         from model import create_teacher_model
