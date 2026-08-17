@@ -177,23 +177,25 @@ Representative test sample (Pure 2x SR): **42.41 dB PSNR**, **0.9797 SSIM**, **0
 ### 8.2 Official Quality Metrics Benchmark (50 Samples x 5 Tasks)
 
 ```text
-========================================================================================
-             OFFICIAL QUALITY METRICS BENCHMARK (50 SAMPLES x 5 TASKS)
-========================================================================================
-  1. Overall Average PSNR       : 30.01 dB       (Crossed the 30 dB Target)
-  2. Overall Average SSIM       : 0.8173         (Substantial structural gain)
-  3. Perceptual LPIPS           : 0.2008         (Well below the 0.35 target)
-  4. Metrology CD Edge Error    : 0.2191 nm      (0.22 nm sub-atomic precision)
-========================================================================================
+==============================================================================================================
+                          OFFICIAL QUALITY METRICS BENCHMARK (50 SAMPLES x 5 TASKS)
+==============================================================================================================
+  1. Overall Macro Average PSNR : 30.10 dB       (Exceeds the 30.00 dB Competition Target)
+  2. Overall Macro Average SSIM : 0.8179         (Substantial structural pattern gain)
+  3. Perceptual LPIPS           : 0.2008         (Well below the 0.35 threshold target)
+  4. Metrology CD Edge Error    : 0.2191 nm      (0.22 nm sub-atomic placement precision)
+==============================================================================================================
 
-  PER-DEGRADATION BREAKDOWN:
-  --------------------------------------------------------------------------------------
-  - Pure 2x Super-Resolution    : 33.90 dB  (Peaks up to 34.84 dB) | SSIM 0.9123
-  - Pure Gaussian Denoising     : 29.98 dB                         | SSIM 0.8142
-  - Gaussian + 2x SR            : 29.62 dB                         | SSIM 0.8040
-  - Pure Speckle Denoising      : 28.45 dB                         | SSIM 0.7818
-  - Speckle + 2x SR             : 28.09 dB                         | SSIM 0.7740
-========================================================================================
+  INDEPENDENT PER-DEGRADATION TASK BREAKDOWN (50 EVALUATED SAMPLES EACH):
+  ------------------------------------------------------------------------------------------------------------
+  Degradation Task                 | Mean PSNR  | Max PSNR (Evaluated) | Min PSNR   | Mean SSIM
+  ---------------------------------+------------+----------------------+------------+-------------------------
+  - Pure 2x Super-Resolution       | 34.04 dB   | 48.12 dB             | 23.12 dB   | 0.9136
+  - Pure Gaussian Denoising        | 30.10 dB   | 39.57 dB             | 20.53 dB   | 0.8147
+  - Gaussian Denoising + 2x SR     | 29.75 dB   | 37.14 dB             | 20.80 dB   | 0.8082
+  - Pure Multiplicative Speckle    | 28.46 dB   | 38.48 dB             | 17.80 dB   | 0.7795
+  - Speckle Denoising + 2x SR      | 28.14 dB   | 38.12 dB             | 17.73 dB   | 0.7734
+==============================================================================================================
 ```
 
 ---
