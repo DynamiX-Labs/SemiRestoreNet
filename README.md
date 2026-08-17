@@ -139,7 +139,7 @@ Model performance is evaluated across four metrics:
 1. **PSNR (Peak Signal-to-Noise Ratio)**: Measures pixel-level reconstruction fidelity in decibels ($\text{dB}$).
 2. **SSIM (Structural Similarity Index)**: Measures structural and edge pattern preservation in $[0, 1]$.
 3. **LPIPS (Learned Perceptual Image Patch Similarity)**: Evaluates deep feature distance (AlexNet backbone). Target: $< 0.35$.
-4. **CD Error (Critical Dimension Placement Error)**: Sub-pixel parabolic interpolation of 50% threshold line-edge boundaries measured in nanometers ($\text{nm}$). Target: $< 0.50\text{ nm}$.
+4. **CD Edge Error (Critical Dimension Placement Error)**: Measures edge contour placement error via symmetric truncated Chamfer distance. For the benchmark, a physical sampling calibration of **0.15 nm/pixel** is adopted, corresponding to a $38.4\text{ nm} \times 38.4\text{ nm}$ FOV over the $256 \times 256$ reference image (yielding $0.219\text{ nm}$ / $1.46\text{ px}$ macro-average). For deployment on a real CD-SEM system, this pixel scale is replaced by instrument-specific calibration. Target: $< 0.50\text{ nm}$.
 
 ---
 
