@@ -7,7 +7,7 @@
 [![Hackathon](https://img.shields.io/badge/SEMICON_Hackathon-orange.svg)](https://i4c.in/hackathon-2026/)
 [![Team](https://img.shields.io/badge/Team-TECH_AVERIX-blueviolet.svg)]()
 
-> **Engineered by Team TECH AVERIX for the Semiconductor Hackathon**
+> **Engineered by Team TECH AVERIX for the SEMICON Hackathon**
 > A physics-grounded deep learning and sub-pixel metrology restoration repository.
 
 ---
