@@ -654,7 +654,7 @@ class FocalFourierBlock(nn.Module):
             nn.LeakyReLU(0.2, inplace=True),
             nn.Conv2d(num_feat * 2, num_feat * 2, kernel_size=1, bias=False),
         )
-        self.gamma = nn.Parameter(torch.tensor(0.0))  # Zero-init for identity initialization
+        self.gamma = nn.Parameter(torch.tensor(0.01))  # Small non-zero init to provide gradient signal
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         h, w = x.shape[2], x.shape[3]
@@ -703,7 +703,7 @@ class MultiScalePyramidBridge(nn.Module):
             nn.PixelShuffle(2),
             nn.LeakyReLU(0.2, inplace=True),
         )
-        self.scale_factor = nn.Parameter(torch.tensor(0.0))  # Zero-init for identity initialization
+        self.scale_factor = nn.Parameter(torch.tensor(0.01))  # Small non-zero init to provide gradient signal
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         h, w = x.shape[2], x.shape[3]
@@ -1056,8 +1056,12 @@ class FullModel(nn.Module):
             feat = block(feat)
         features['after_stage3'] = feat
         
+        # v3 modules: Attention 3 + Fourier + Defect Attention + Pyramid
+        feat = self.attn3(feat)
+        feat = self.fourier_block(feat)
         feat = self.cbam(feat)
-        feat_trunk = self.conv_body(feat) + feat_first
+        feat_macro = self.pyramid_bridge(feat_stage1)
+        feat_trunk = self.conv_body(feat) + feat_first + feat_macro
         
         feat_head_in = (
             feat_trunk

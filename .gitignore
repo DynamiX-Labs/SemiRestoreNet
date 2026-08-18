@@ -51,3 +51,7 @@ preview_restored/
 .idea/
 .DS_Store
 Thumbs.db
+
+outputs/
+final_submission.zip
+test_noisy_inputs.png

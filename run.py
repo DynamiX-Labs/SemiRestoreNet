@@ -73,20 +73,20 @@ def load_input_array(file_path: str) -> tuple:
             arr = arr.squeeze()
         if arr.ndim != 2:
             arr = arr[:, :, 0]
-        # Auto-normalize if stored in [0, 255]
-        if arr.max() > 1.0:
+        # Auto-normalize only if stored in uint8-like [0, 255] range
+        # Values slightly above 1.0 are normal speckle noise excursions — do NOT clip them
+        if arr.max() > 2.0:
             arr = arr / 255.0
-        # Ensure finite values
+        # Ensure finite values (NaN/Inf protection only — preserve valid out-of-range noise)
         arr = np.nan_to_num(arr, nan=0.0, posinf=1.0, neginf=0.0)
-        arr = np.clip(arr, 0.0, 1.0)
+        # NOTE: Do NOT clip to [0, 1] — model expects unclamped degraded inputs matching training distribution
         tensor = torch.from_numpy(arr).unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
         return tensor, {'is_npy': True, 'original_shape': arr.shape}
 
-    # Standard image fallback
+    # Standard image fallback (uint8 images — /255 normalization is correct here)
     img = Image.open(file_path).convert('L')
     arr = np.array(img, dtype=np.float32) / 255.0
     arr = np.nan_to_num(arr, nan=0.0, posinf=1.0, neginf=0.0)
-    arr = np.clip(arr, 0.0, 1.0)
     tensor = torch.from_numpy(arr).unsqueeze(0).unsqueeze(0)
     return tensor, {'is_npy': False, 'original_shape': arr.shape}
 
@@ -203,18 +203,39 @@ def restore_tensor(model, in_tensor: torch.Tensor, device: torch.device, use_tta
     ]
     
     predictions = []
-    for tf, inv_tf in zip(transforms, inv_transforms):
-        x_tf = tf(in_tensor)
-        padded, pad_sizes = pad_to_multiple(x_tf, 16)
-        if device.type == 'cuda':
-            with torch.amp.autocast('cuda', dtype=torch.float16):
+    
+    # Optional multi-scale inference for maximum PSNR
+    scales = [0.95, 1.0, 1.05] if getattr(model, 'use_multi_scale_tta', False) else [1.0]
+    _, _, original_h, original_w = in_tensor.shape
+    
+    for scale in scales:
+        if scale != 1.0:
+            scaled_h = int(original_h * scale)
+            scaled_w = int(original_w * scale)
+            scaled_tensor = torch.nn.functional.interpolate(in_tensor, size=(scaled_h, scaled_w), mode='bilinear', align_corners=False)
+        else:
+            scaled_tensor = in_tensor
+            
+        for tf, inv_tf in zip(transforms, inv_transforms):
+            x_tf = tf(scaled_tensor)
+            padded, pad_sizes = pad_to_multiple(x_tf, 16)
+            if device.type == 'cuda':
+                with torch.amp.autocast('cuda', dtype=torch.float16):
+                    out = model(padded)
+                    res = out['restored'] if isinstance(out, dict) else out
+            else:
                 out = model(padded)
                 res = out['restored'] if isinstance(out, dict) else out
-        else:
-            out = model(padded)
-            res = out['restored'] if isinstance(out, dict) else out
-        unpadded = unpad(res, pad_sizes, upscale_factor=2)
-        predictions.append(inv_tf(unpadded))
+                
+            unpadded = unpad(res, pad_sizes, upscale_factor=2)
+            pred = inv_tf(unpadded)
+            
+            # Scale back to original target resolution (which is original * 2)
+            target_h, target_w = original_h * 2, original_w * 2
+            if pred.shape[-2:] != (target_h, target_w):
+                pred = torch.nn.functional.interpolate(pred, size=(target_h, target_w), mode='bicubic', align_corners=False)
+                
+            predictions.append(pred)
         
     avg_res = torch.stack(predictions, dim=0).mean(dim=0)
     return torch.clamp(avg_res, 0.0, 1.0)
@@ -239,6 +260,7 @@ Usage:
     parser.add_argument('--output_dir', '-o', type=str, default=None, help='Output directory to save restored files')
     parser.add_argument('--checkpoint', '-c', type=str, default=DEFAULT_CHECKPOINT, help='Model checkpoint path')
     parser.add_argument('--no_tta', action='store_true', help='Disable 8-fold TTA for fast single-pass inference')
+    parser.add_argument('--multi_scale', action='store_true', help='Enable multi-scale geometric TTA for maximum PSNR (slower)')
     
     args = parser.parse_args()
     

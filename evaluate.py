@@ -67,7 +67,9 @@ def load_image_grayscale(path: str) -> tuple:
             pass
         elif arr.ndim == 3:
             arr = arr.squeeze()
-        if arr.max() > 1.0:
+        # Only normalize if stored in uint8-like [0, 255] range
+        # Values slightly above 1.0 are normal speckle noise excursions — do NOT divide by 255
+        if arr.max() > 2.0:
             arr = arr / 255.0
         tensor = torch.from_numpy(arr).unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
         return tensor, {'is_npy': True, 'size': (arr.shape[1], arr.shape[0])}
@@ -255,7 +257,9 @@ def restore_image(
         padded, pad_sizes = pad_to_multiple(image_tensor, pad_multiple)
         output = model(padded)
         restored = output['restored'] if isinstance(output, dict) else output
-        restored = unpad(restored, pad_sizes)
+        # Detect upscale factor from input/output resolution ratio
+        uf = restored.shape[-1] // padded.shape[-1] if padded.shape[-1] > 0 else 1
+        restored = unpad(restored, (pad_sizes[0] * uf, pad_sizes[1] * uf))
         return torch.clamp(restored, 0.0, 1.0)
         
     # Geometric transformations (4 Rotations x 2 Flips)
@@ -283,7 +287,13 @@ def restore_image(
     
     scales = [0.95, 1.0, 1.05] if multi_scale else [1.0]
     _, _, h, w = image_tensor.shape
-    out_h, out_w = h * 2, w * 2
+    # Detect upscale factor dynamically from a probe forward pass
+    _probe_pad, _probe_ps = pad_to_multiple(image_tensor, pad_multiple)
+    with torch.no_grad():
+        _probe_out = model(_probe_pad)
+        _probe_res = _probe_out['restored'] if isinstance(_probe_out, dict) else _probe_out
+    upscale_detected = _probe_res.shape[-1] // _probe_pad.shape[-1] if _probe_pad.shape[-1] > 0 else 1
+    out_h, out_w = h * upscale_detected, w * upscale_detected
     predictions = []
     
     for s in scales:
@@ -304,7 +314,7 @@ def restore_image(
                 out = model(padded_xs)
                 res = out['restored'] if isinstance(out, dict) else out
                 
-            unpadded_res = unpad(res, (pad_sizes[0] * 2, pad_sizes[1] * 2))
+            unpadded_res = unpad(res, (pad_sizes[0] * upscale_detected, pad_sizes[1] * upscale_detected))
             single_pred = inv_tf(unpadded_res)
             if single_pred.shape[-2:] != (out_h, out_w):
                 single_pred = torch.nn.functional.interpolate(

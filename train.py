@@ -130,7 +130,14 @@ def train_one_epoch(
         
         with torch.autocast(device_type=device.type, enabled=use_amp):
             output = model(degraded)
-            losses = loss_fn(pred=output['restored'], target=clean, degraded=degraded)
+            losses = loss_fn(
+                pred=output['restored'],
+                target=clean,
+                degraded=degraded,
+                noise_level_pred=output.get('noise_level_pred'),
+                noise_level_gt=batch.get('noise_level'),
+                charging_applied=batch.get('charging_applied'),
+            )
             scaled_loss = losses['total'] / accumulation_steps
         
         if not torch.isfinite(scaled_loss):
@@ -197,7 +204,8 @@ def validate(model, dataloader, loss_fn, device, max_val_samples: int = None) ->
             loss_accum[key] += val.item()
         count += 1
         
-        pred_np = output['restored'].cpu().squeeze().numpy()
+        pred = torch.clamp(output['restored'], 0.0, 1.0)
+        pred_np = pred.cpu().squeeze().numpy()
         clean_np = clean.cpu().squeeze().numpy()
         
         psnr = compute_psnr(pred_np, clean_np)

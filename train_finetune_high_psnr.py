@@ -107,6 +107,7 @@ def validate(model: nn.Module, val_loader: DataLoader, device: torch.device, use
             else:
                 pred = model(degraded, return_dict=False)
                 
+            pred = torch.clamp(pred, 0.0, 1.0)
             pred_np = pred.squeeze().cpu().numpy()
             clean_np = clean.squeeze().cpu().numpy()
             
@@ -132,8 +133,9 @@ def validate(model: nn.Module, val_loader: DataLoader, device: torch.device, use
 
 def run_finetuning(
     epochs: int = 25,
-    batch_size: int = 2,
-    accumulation_steps: int = 8,
+    patch_size: int = 256,
+    batch_size: int = 1,
+    accumulation_steps: int = 16,
     lr: float = 8e-5,
     resume_checkpoint: str = "checkpoints/best_finetuned_model.pth",
     pretrained_esrgan: str = "checkpoints/RealESRGAN_x4plus.pth",
@@ -181,7 +183,7 @@ def run_finetuning(
     
     train_dataset = DomainRandomizationDataset(
         data_dir=train_dir,
-        patch_size=128,
+        patch_size=patch_size,
         mode='train',
         upscale_factor=2,
     )
