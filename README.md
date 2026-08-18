@@ -13,7 +13,6 @@
 ###  Hackathon Submissions & Links
 -  [**Tech Document**](https://drive.google.com/file/d/1dSg0dhqt_UHGx8QosI9EoFdv2K6MQry1/view?usp=sharing)
 -  [**Demo Video**](https://drive.google.com/file/d/1miPV8OD02qU-8wMQoHyM6ul2ArwZtSZc/view?usp=sharing)
--  [**SEMICON 2026 Hackathon Page**](https://i4c.in/hackathon-2026/)
 
 ---
 
